@@ -10,7 +10,9 @@
 * Attributes follow the stable database semantic conventions: `db.system.name`,
   `db.namespace`, `db.collection.name`, `db.operation.name`, `db.response.status_code` and
   `error.type`. Spans are named `{db.operation.name} {db.collection.name}`.
-* The `:db_statement` option is now `:db_query_text` and sets `db.query.text`.
+* The `:db_statement` option is now `:db_query_text` and sets `db.query.text`. It records the
+  whole command (`:plain`), or the whole command with every value replaced by `?`
+  (`:obfuscated`), instead of a fixed set of keys.
 * A failed span's status description is its error code, not the error message, which can
   hold the command's values.
 

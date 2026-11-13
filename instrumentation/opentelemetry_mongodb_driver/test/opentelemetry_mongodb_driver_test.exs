@@ -139,22 +139,41 @@ defmodule OpentelemetryMongodbDriverTest do
       assert_receive {:span, span(name: "find users", attributes: attributes)}
 
       assert %{"db.query.text": text} = :otel_attributes.map(attributes)
-      assert Jason.decode!(text) == %{"filter" => %{"name" => "?"}}
+      assert %{"find" => "?", "filter" => %{"name" => "?"}} = Jason.decode!(text)
+      refute text =~ "Ada"
     end
 
     test "keeps the values when plain", %{conn: conn} do
       OpentelemetryMongodbDriver.setup(db_query_text: :plain)
 
       id = Mongo.object_id()
+      encoded_id = BSON.ObjectId.encode!(id)
       Mongo.find(conn, "users", %{_id: id, name: "Ada"}) |> Enum.to_list()
 
       assert_receive {:span, span(name: "find users", attributes: attributes)}
 
       assert %{"db.query.text": text} = :otel_attributes.map(attributes)
 
-      assert Jason.decode!(text) == %{
-               "filter" => %{"_id" => BSON.ObjectId.encode!(id), "name" => "Ada"}
-             }
+      assert %{
+               "find" => "users",
+               "filter" => %{"_id" => ^encoded_id, "name" => "Ada"}
+             } = Jason.decode!(text)
+    end
+
+    test "records the documents of an insert when plain", %{conn: conn} do
+      OpentelemetryMongodbDriver.setup(db_query_text: :plain)
+
+      {:ok, _} = Mongo.insert_one(conn, "users", %{name: "Ada", born: ~U[1815-12-10 00:00:00Z]})
+
+      assert_receive {:span, span(name: "insert users", attributes: attributes)}
+
+      assert %{"db.query.text": text} = :otel_attributes.map(attributes)
+
+      assert %{
+               "insert" => "users",
+               "documents" => [%{"name" => "Ada", "born" => "1815-12-10 00:00:00Z"}]
+             } =
+               Jason.decode!(text)
     end
 
     test "is what a given function returns", %{conn: conn} do

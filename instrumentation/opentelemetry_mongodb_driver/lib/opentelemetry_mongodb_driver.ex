@@ -46,7 +46,7 @@ defmodule OpentelemetryMongodbDriver do
 
   alias OpenTelemetry.SemConv.ErrorAttributes
   alias OpenTelemetry.SemConv.Incubating.DBAttributes
-  alias OpentelemetryMongodbDriver.Command
+  alias OpenTelemetry.SemConv.Incubating.Metrics.DBMetrics
 
   require OpenTelemetry.Tracer
 
@@ -92,7 +92,7 @@ defmodule OpentelemetryMongodbDriver do
   def setup(opts \\ []) do
     config = Map.new(NimbleOptions.validate!(opts, @options_schema))
 
-    Histogram.create(:"db.client.operation.duration", %{
+    Histogram.create(DBMetrics.db_client_operation_duration(), %{
       unit: :s,
       description: "Duration of database client operations.",
       advisory_params: %{
@@ -140,7 +140,7 @@ defmodule OpentelemetryMongodbDriver do
       |> maybe_put(ErrorAttributes.error_type(), error_type(error, status_code))
 
     Histogram.record(
-      :"db.client.operation.duration",
+      DBMetrics.db_client_operation_duration(),
       duration / 1_000_000,
       Map.take(attributes, @metric_attributes)
     )
@@ -219,8 +219,26 @@ defmodule OpentelemetryMongodbDriver do
   defp query_text(_command, %{db_query_text: :disabled}), do: nil
   defp query_text(command, %{db_query_text: fun}) when is_function(fun, 1), do: fun.(command)
 
-  defp query_text(command, %{db_query_text: mode}),
-    do: Command.sanitize(command, mode == :obfuscated)
+  defp query_text(command, %{db_query_text: :plain}),
+    do: Jason.encode!(encodable(command, &plain/1))
+
+  defp query_text(command, %{db_query_text: :obfuscated}),
+    do: Jason.encode!(encodable(command, fn _ -> "?" end))
+
+  defp encodable(value, leaf) when is_map(value) and not is_struct(value),
+    do: Map.new(value, fn {key, item} -> {key, encodable(item, leaf)} end)
+
+  defp encodable([{key, _} | _] = value, leaf) when is_atom(key) or is_binary(key),
+    do: Map.new(value, fn {key, item} -> {key, encodable(item, leaf)} end)
+
+  defp encodable(value, leaf) when is_list(value), do: Enum.map(value, &encodable(&1, leaf))
+  defp encodable(value, leaf), do: leaf.(value)
+
+  defp plain(value) when is_struct(value) or is_tuple(value) do
+    if String.Chars.impl_for(value), do: to_string(value), else: inspect(value)
+  end
+
+  defp plain(value), do: value
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
