@@ -75,6 +75,7 @@ defmodule OpentelemetryEctoTest do
       {:otel_batch_processor, %{scheduled_delay_ms: 1}}
     ])
 
+    :otel_batch_processor.force_flush(%{reg_name: :otel_batch_processor_global})
     :otel_batch_processor.set_exporter(:otel_exporter_pid, self())
 
     on_exit(fn ->
