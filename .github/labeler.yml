@@ -168,6 +168,11 @@ opentelemetry_xandra:
       - any-glob-to-any-file:
           - instrumentation/opentelemetry_xandra/**/*
 
+opentelemetry_mongodb_driver:
+  - changed-files:
+      - any-glob-to-any-file:
+          - instrumentation/opentelemetry_mongodb_driver/**/*
+
 opentelemetry_commanded:
   - changed-files:
       - any-glob-to-any-file:
