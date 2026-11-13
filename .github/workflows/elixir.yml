@@ -877,7 +877,7 @@ jobs:
         image: mongo@sha256:d97fea17ccb8d004cd137be8dab54d70d0df11be69c9f422aefe4484c8414ab7
         ports:
           - 27017:27017
-        options: --health-cmd "mongosh --quiet --eval 'db.runCommand({ping: 1})'" --health-interval 5s --health-retries 30
+        options: --health-cmd "mongosh --quiet --eval db.adminCommand('ping')" --health-interval 5s --health-retries 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
