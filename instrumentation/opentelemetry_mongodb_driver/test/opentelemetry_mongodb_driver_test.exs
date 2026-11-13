@@ -142,6 +142,21 @@ defmodule OpentelemetryMongodbDriverTest do
       assert Jason.decode!(text) == %{"filter" => %{"name" => "?"}}
     end
 
+    test "keeps the values when plain", %{conn: conn} do
+      OpentelemetryMongodbDriver.setup(db_query_text: :plain)
+
+      id = Mongo.object_id()
+      Mongo.find(conn, "users", %{_id: id, name: "Ada"}) |> Enum.to_list()
+
+      assert_receive {:span, span(name: "find users", attributes: attributes)}
+
+      assert %{"db.query.text": text} = :otel_attributes.map(attributes)
+
+      assert Jason.decode!(text) == %{
+               "filter" => %{"_id" => BSON.ObjectId.encode!(id), "name" => "Ada"}
+             }
+    end
+
     test "is what a given function returns", %{conn: conn} do
       OpentelemetryMongodbDriver.setup(
         db_query_text: fn [{command, collection} | _] -> "#{command} #{collection}" end

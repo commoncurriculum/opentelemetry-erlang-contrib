@@ -69,6 +69,6 @@ defmodule OpentelemetryMongodbDriver.Command do
     do: Enum.map(val, &sanitize_map(&1, obfuscate))
 
   defp sanitize_map(_val, true), do: "?"
-  defp sanitize_map(val, false) when is_struct(val, BSON.ObjectId), do: BSON.ObjectId.encode!(val)
+  defp sanitize_map(val, false) when is_struct(val, BSON.ObjectId), do: to_string(val)
   defp sanitize_map(val, false), do: val
 end
