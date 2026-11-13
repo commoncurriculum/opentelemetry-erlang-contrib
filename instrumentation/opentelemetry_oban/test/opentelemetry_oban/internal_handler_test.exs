@@ -36,7 +36,7 @@ defmodule OpentelemetryOban.InternalHandlerTest do
   end
 
   test "the engine work around a job is traced, and settling the job is a child of the job's span" do
-    OpentelemetryOban.setup()
+    OpentelemetryOban.setup(internal: [])
     start_oban()
 
     {:ok, _job} = Oban.insert(__MODULE__, TestJob.new(%{}))
@@ -70,7 +70,7 @@ defmodule OpentelemetryOban.InternalHandlerTest do
   end
 
   test "an engine failure fails its span" do
-    OpentelemetryOban.setup()
+    OpentelemetryOban.setup(internal: [])
 
     meta = %{conf: Oban.config(), engine: Oban.Engines.Basic}
 
@@ -90,7 +90,7 @@ defmodule OpentelemetryOban.InternalHandlerTest do
   end
 
   test "a thrown engine failure fails its span without an error type" do
-    OpentelemetryOban.setup()
+    OpentelemetryOban.setup(internal: [])
 
     meta = %{conf: Oban.config(), engine: Oban.Engines.Basic}
 
@@ -109,8 +109,8 @@ defmodule OpentelemetryOban.InternalHandlerTest do
     refute Map.has_key?(:otel_attributes.map(attributes), :"error.type")
   end
 
-  test "internal: :disabled leaves the engine untraced" do
-    OpentelemetryOban.setup(internal: :disabled)
+  test "the engine is untraced by default" do
+    OpentelemetryOban.setup()
     start_oban()
 
     {:ok, _job} = Oban.insert(__MODULE__, TestJob.new(%{}))

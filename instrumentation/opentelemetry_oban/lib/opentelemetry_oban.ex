@@ -56,11 +56,11 @@ defmodule OpentelemetryOban do
     internal: [
       type: {:in, [[], :disabled]},
       type_spec: quote(do: internal_options()),
-      default: [],
+      default: :disabled,
       doc: """
       Internal handler configuration. Traces Oban's engine, notifier and peer work, such as
       fetching, staging and acknowledging jobs, so the queries it makes have a parent span.
-      Set to `:disabled` to skip internal handler setup.
+      Off by default, because Oban polls every queue on every node; set to `[]` to turn it on.
       """
     ]
   ]

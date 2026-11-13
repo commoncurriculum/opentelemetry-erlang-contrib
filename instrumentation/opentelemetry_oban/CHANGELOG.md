@@ -6,7 +6,7 @@
 
 * Trace Oban's engine, notifier and peer work (`oban.engine.fetch_jobs`, `oban.engine.complete_job`,
   `oban.peer.election`, ...) as internal spans, so the queries Oban makes have a parent span instead
-  of each starting its own trace. On by default; disable with `internal: :disabled`.
+  of each starting its own trace. Off by default, since Oban polls every queue on every node; turn it on with `internal: []`.
 
 ### Fixed
 
