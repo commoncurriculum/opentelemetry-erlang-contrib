@@ -546,7 +546,7 @@ defmodule OpentelemetryEctoTest do
                       events: events
                     )}
 
-    assert message =~ "non_existent_field does not exist"
+    assert message == "undefined_column"
 
     assert %{unquote(ErrorAttributes.error_type()) => :undefined_column} =
              :otel_attributes.map(attributes)
@@ -556,10 +556,34 @@ defmodule OpentelemetryEctoTest do
 
     assert %{
              "exception.type": "Elixir.Postgrex.Error",
-             "exception.message": exception_message
+             "exception.message": "undefined_column"
            } = :otel_attributes.map(exception_attributes)
+  end
 
-    assert exception_message =~ "non_existent_field does not exist"
+  test "a failed query's status and exception leave out the row's values - postgres" do
+    Repo.insert!(%User{id: 424_242})
+    setup_instrumentation()
+
+    assert_raise Ecto.ConstraintError, fn -> Repo.insert!(%User{id: 424_242}) end
+
+    assert_receive {:span, span(name: "INSERT users", status: {:status, :error, message}, events: events)}
+
+    assert message == "unique_violation"
+    assert [event(attributes: exception_attributes)] = :otel_events.list(events)
+    assert %{"exception.message": "unique_violation"} = :otel_attributes.map(exception_attributes)
+  end
+
+  test "a failed query's status and exception leave out the row's values - myxql" do
+    MyXQLRepo.insert!(%User{id: 424_242})
+    setup_instrumentation(event_prefix: [:opentelemetry_ecto, :my_xql_test_repo])
+
+    assert_raise Ecto.ConstraintError, fn -> MyXQLRepo.insert!(%User{id: 424_242}) end
+
+    assert_receive {:span, span(status: {:status, :error, message}, events: events)}
+
+    assert message == "1062"
+    assert [event(attributes: exception_attributes)] = :otel_events.list(events)
+    assert %{"exception.message": "1062"} = :otel_attributes.map(exception_attributes)
   end
 
   test "sets error message on error - myxql" do
@@ -579,7 +603,7 @@ defmodule OpentelemetryEctoTest do
                       events: events
                     )}
 
-    assert message =~ "Unknown column 'u0.non_existent_field'"
+    assert message == "1054"
 
     assert %{unquote(ErrorAttributes.error_type()) => 1054} =
              :otel_attributes.map(attributes)
@@ -589,10 +613,8 @@ defmodule OpentelemetryEctoTest do
 
     assert %{
              "exception.type": "Elixir.MyXQL.Error",
-             "exception.message": exception_message
+             "exception.message": "1054"
            } = :otel_attributes.map(exception_attributes)
-
-    assert exception_message =~ "Unknown column 'u0.non_existent_field'"
   end
 
   test "sets error message on error - tds" do
@@ -612,7 +634,7 @@ defmodule OpentelemetryEctoTest do
                       events: events
                     )}
 
-    assert message =~ "Invalid column name 'non_existent_field'"
+    assert message == "207"
 
     assert %{unquote(ErrorAttributes.error_type()) => 207} =
              :otel_attributes.map(attributes)
@@ -622,10 +644,8 @@ defmodule OpentelemetryEctoTest do
 
     assert %{
              "exception.type": "Elixir.Tds.Error",
-             "exception.message": exception_message
+             "exception.message": "207"
            } = :otel_attributes.map(exception_attributes)
-
-    assert exception_message =~ "Invalid column name 'non_existent_field'"
   end
 
   test "sets error message on error - sqlite3" do
