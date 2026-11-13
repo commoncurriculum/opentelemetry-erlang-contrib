@@ -1,5 +1,6 @@
 defmodule OpentelemetryEcto do
   require OpenTelemetry.Tracer
+  require OpenTelemetryAPIExperimental.Histogram, as: Histogram
 
   alias OpenTelemetry.SemConv.ErrorAttributes
   alias OpenTelemetry.SemConv.Incubating.DBAttributes
@@ -89,6 +90,9 @@ defmodule OpentelemetryEcto do
   ## Semantic Conventions
 
   All required and recommended DB Client Call Span semantic conventions are implemented.
+
+  Each query also records the `db.client.operation.duration` histogram, in seconds, with the
+  span's low-cardinality attributes.
   Supported opt-in attributes can be configured using the `opt_in_attrs` option.
 
   > #### Note {: .info}
@@ -177,6 +181,16 @@ defmodule OpentelemetryEcto do
 
   @type opt_out_attrs() :: [opt_out_attr()]
 
+  @metric_attributes [
+    :"db.system.name",
+    DBAttributes.db_namespace(),
+    DBAttributes.db_operation_name(),
+    DBAttributes.db_collection_name(),
+    ServerAttributes.server_address(),
+    ServerAttributes.server_port(),
+    ErrorAttributes.error_type()
+  ]
+
   @type options() :: [unquote(NimbleOptions.option_typespec(@options_schema))]
 
   @doc """
@@ -190,6 +204,14 @@ defmodule OpentelemetryEcto do
       opts
       |> NimbleOptions.validate!(@options_schema)
       |> Enum.into(%{})
+
+    Histogram.create(:"db.client.operation.duration", %{
+      unit: :s,
+      description: "Duration of database client operations.",
+      advisory_params: %{
+        explicit_bucket_boundaries: [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+      }
+    })
 
     event = config.event_prefix ++ [:query]
 
@@ -296,6 +318,15 @@ defmodule OpentelemetryEcto do
       |> maybe_add_server_port(repo.__adapter__(), repo_config)
       |> set_db_operation_name(query, type)
       |> maybe_add_error_type(repo.__adapter__(), query_result)
+
+    Histogram.record(
+      :"db.client.operation.duration",
+      System.convert_time_unit(total_time, :native, :nanosecond) / 1_000_000_000,
+      Map.take(attributes, @metric_attributes)
+    )
+
+    attributes =
+      attributes
       |> add_measurements(measurements)
       |> set_additional_attributes(config, per_query_opts)
 

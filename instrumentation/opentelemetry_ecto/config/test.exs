@@ -59,3 +59,11 @@ config :opentelemetry_ecto, OpentelemetryEcto.ClickhouseTestRepo,
   database: "default",
   hostname: "localhost",
   port: 8123
+
+config :opentelemetry_experimental,
+  readers: [
+    %{
+      module: :otel_metric_reader,
+      config: %{exporter: {:otel_metric_exporter_pid, {:otel_metric, :otel_ecto_metric_test}}}
+    }
+  ]

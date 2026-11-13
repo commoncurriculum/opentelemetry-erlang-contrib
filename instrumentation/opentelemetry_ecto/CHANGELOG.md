@@ -9,6 +9,7 @@
 ### Features
 
 - ClickHouse (`ecto_ch`) is reported as `clickhouse`, with its error code as `error.type`
+- Records the `db.client.operation.duration` histogram (requires `opentelemetry_api_experimental`; recorded only when an SDK meter provider is configured)
 
 ### Fixes
 

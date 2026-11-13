@@ -24,6 +24,10 @@ defmodule OpentelemetryEctoTest do
     Record.defrecord(name, spec)
   end
 
+  for {name, spec} <- Record.extract_all(from_lib: "opentelemetry_experimental/include/otel_metrics.hrl") do
+    Record.defrecord(name, spec)
+  end
+
   setup_all do
     # this is done to capture init events when the repos get started
     setup_instrumentation()
@@ -351,6 +355,68 @@ defmodule OpentelemetryEctoTest do
     assert_receive {:span, span(status: {:status, :error, _message}, attributes: attributes)}
 
     assert %{unquote(ErrorAttributes.error_type()) => 60} = :otel_attributes.map(attributes)
+  end
+
+  describe "db.client.operation.duration" do
+    setup do
+      Process.register(self(), :otel_ecto_metric_test)
+      :ok
+    end
+
+    test "is recorded for each query with the span's low-cardinality attributes" do
+      setup_instrumentation()
+
+      Repo.all(User)
+      :otel_meter_server.force_flush()
+
+      assert_receive {:otel_metric,
+                      metric(
+                        name: :"db.client.operation.duration",
+                        unit: :s,
+                        data: histogram(datapoints: datapoints)
+                      )}
+
+      assert histogram_datapoint(attributes: attributes, count: count, sum: sum) =
+               Enum.find(
+                 datapoints,
+                 &match?(
+                   histogram_datapoint(attributes: %{"db.collection.name": "users", "db.system.name": :postgresql}),
+                   &1
+                 )
+               )
+
+      assert count >= 1 and sum > 0
+
+      assert %{
+               "db.system.name": :postgresql,
+               "db.namespace": "opentelemetry_ecto_test",
+               "db.operation.name": :SELECT,
+               "server.address": "localhost"
+             } = attributes
+
+      refute Map.has_key?(attributes, :"db.query.text")
+      refute Map.has_key?(attributes, :"ecto.total_time.duration")
+    end
+
+    test "carries error.type for a failed query" do
+      setup_instrumentation()
+
+      try do
+        Repo.all(from(u in "comments", select: u.non_existent_field))
+      rescue
+        _ -> :ok
+      end
+
+      :otel_meter_server.force_flush()
+
+      assert_receive {:otel_metric,
+                      metric(name: :"db.client.operation.duration", data: histogram(datapoints: datapoints))}
+
+      assert Enum.any?(
+               datapoints,
+               &match?(histogram_datapoint(attributes: %{"error.type": :undefined_column}), &1)
+             )
+    end
   end
 
   test "allow per-request options via telemetry_options" do
