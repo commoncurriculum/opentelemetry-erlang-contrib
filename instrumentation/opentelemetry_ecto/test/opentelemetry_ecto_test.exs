@@ -183,7 +183,7 @@ defmodule OpentelemetryEctoTest do
     end
 
     expected_attrs = [
-      {DBAttributes.db_system(), DBAttributes.db_system_values().postgresql},
+      {:"db.system.name", :postgresql},
       {DBAttributes.db_collection_name(), "users"},
       {DBAttributes.db_namespace(), "opentelemetry_ecto_test"},
       {ServerAttributes.server_address(), "localhost"},
@@ -225,7 +225,7 @@ defmodule OpentelemetryEctoTest do
     end
 
     expected_attrs = [
-      {DBAttributes.db_system(), DBAttributes.db_system_values().mysql},
+      {:"db.system.name", :mysql},
       {DBAttributes.db_collection_name(), "users"},
       {DBAttributes.db_namespace(), "opentelemetry_ecto_test"},
       {ServerAttributes.server_address(), "localhost"},
@@ -267,7 +267,7 @@ defmodule OpentelemetryEctoTest do
     end
 
     expected_attrs = [
-      {DBAttributes.db_system(), DBAttributes.db_system_values().mssql},
+      {:"db.system.name", :"microsoft.sql_server"},
       {DBAttributes.db_collection_name(), "users"},
       {DBAttributes.db_namespace(), "opentelemetry_ecto_test"},
       {ServerAttributes.server_address(), "localhost"},
@@ -309,7 +309,7 @@ defmodule OpentelemetryEctoTest do
     end
 
     expected_attrs = [
-      {DBAttributes.db_system(), DBAttributes.db_system_values().sqlite},
+      {:"db.system.name", :sqlite},
       {DBAttributes.db_collection_name(), "users"},
       {DBAttributes.db_namespace(), "opentelemetry_ecto_test.db"},
       {ServerAttributes.server_address(), "opentelemetry_ecto_test.db"},
@@ -324,7 +324,9 @@ defmodule OpentelemetryEctoTest do
   end
 
   test "allow per-request options via telemetry_options" do
-    setup_instrumentation(additional_span_attributes: %{"config.attribute": "special value", "db.system": "my_system"})
+    setup_instrumentation(
+      additional_span_attributes: %{"config.attribute": "special value", "db.system.name": "my_system"}
+    )
 
     Repo.all(User,
       telemetry_options: [
@@ -332,7 +334,7 @@ defmodule OpentelemetryEctoTest do
           span_name: "custom span name",
           attributes: %{
             "config.attribute": "special value overwritten",
-            "db.system": "my_system",
+            "db.system.name": "my_system",
             "db.query.summary": "custom summary",
             extra: "should add"
           }
@@ -345,7 +347,7 @@ defmodule OpentelemetryEctoTest do
     # don't merge instrumentation-set attrs but can overwrite config set
     assert %{
              "config.attribute": "special value overwritten",
-             "db.system": :postgresql,
+             "db.system.name": :postgresql,
              "db.query.summary": "custom summary",
              extra: "should add"
            } =
@@ -387,14 +389,16 @@ defmodule OpentelemetryEctoTest do
   end
 
   test "include additional_attributes" do
-    setup_instrumentation(additional_span_attributes: %{"config.attribute": "special value", "db.system": "my_system"})
+    setup_instrumentation(
+      additional_span_attributes: %{"config.attribute": "special value", "db.system.name": "my_system"}
+    )
 
     Repo.all(User)
 
     assert_receive {:span, span(attributes: attributes)}
 
     # don't merge instrumentation-set attrs
-    assert %{"config.attribute": "special value", "db.system": :postgresql} =
+    assert %{"config.attribute": "special value", "db.system.name": :postgresql} =
              :otel_attributes.map(attributes)
   end
 

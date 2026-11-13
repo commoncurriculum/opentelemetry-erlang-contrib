@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Breaking Changes
+
+- `db.system` is replaced by the stable `db.system.name`, with SQL Server reported as `microsoft.sql_server`
+
 ## 2.0.0-beta.1
 
 ## Features

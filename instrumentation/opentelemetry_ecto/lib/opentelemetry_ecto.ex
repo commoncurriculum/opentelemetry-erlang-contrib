@@ -133,7 +133,7 @@ defmodule OpentelemetryEcto do
         span_name: "custom span name",
         attributes: %{
           "config.attribute": "special value overwritten",
-          "db.system": "my_system",
+          "db.system.name": "my_system",
           extra: "should add"
         }
       }
@@ -286,7 +286,7 @@ defmodule OpentelemetryEcto do
 
     attributes =
       %{
-        unquote(DBAttributes.db_system()) => db_system(repo.__adapter__()),
+        :"db.system.name" => db_system_name(repo.__adapter__()),
         unquote(DBAttributes.db_namespace()) => repo_config.database,
         unquote(DBAttributes.db_query_text()) => query
       }
@@ -362,19 +362,13 @@ defmodule OpentelemetryEcto do
     end
   end
 
-  db_systems = [
-    {Ecto.Adapters.Postgres, DBAttributes.db_system_values().postgresql},
-    {Ecto.Adapters.MyXQL, DBAttributes.db_system_values().mysql},
-    {Ecto.Adapters.SQLite3, DBAttributes.db_system_values().sqlite},
-    {Ecto.Adapters.Tds, DBAttributes.db_system_values().mssql}
-  ]
+  defp db_system_name(Ecto.Adapters.Postgres), do: :postgresql
+  defp db_system_name(Ecto.Adapters.MyXQL), do: :mysql
+  defp db_system_name(Ecto.Adapters.SQLite3), do: :sqlite
+  defp db_system_name(Ecto.Adapters.Tds), do: :"microsoft.sql_server"
 
-  for {adapter, system} <- db_systems do
-    defp db_system(unquote(adapter)), do: unquote(system)
-  end
-
-  # NOTE: This is the catch-all clause where we use other_sql as the db.system value, but it may not be a SQL based database.
-  defp db_system(_), do: DBAttributes.db_system_values().other_sql
+  # NOTE: This is the catch-all clause where we use other_sql as the db.system.name value, but it may not be a SQL based database.
+  defp db_system_name(_), do: :other_sql
 
   defp set_db_collection_name(attributes, source) do
     Map.put(attributes, DBAttributes.db_collection_name(), source)
