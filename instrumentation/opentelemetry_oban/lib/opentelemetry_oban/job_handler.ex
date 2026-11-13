@@ -4,8 +4,8 @@ defmodule OpentelemetryOban.JobHandler do
   alias OpenTelemetry.Ctx
   alias OpenTelemetry.Span
   alias OpenTelemetry.Tracer
-  alias OpenTelemetry.SemConv.ErrorAttributes
   alias OpenTelemetry.SemConv.Incubating.MessagingAttributes
+  alias OpentelemetryOban.Errors
 
   @tracer_id __MODULE__
 
@@ -130,7 +130,7 @@ defmodule OpentelemetryOban.JobHandler do
 
     Span.record_exception(ctx, reason, stacktrace)
     Span.set_status(ctx, OpenTelemetry.status(:error, ""))
-    set_error_type(reason)
+    Errors.set_error_type(reason)
 
     set_measurements_attributes(measurements)
 
@@ -143,11 +143,6 @@ defmodule OpentelemetryOban.JobHandler do
       :"oban.job.queue_time_us" => System.convert_time_unit(queue_time, :nanosecond, :microsecond)
     })
   end
-
-  defp set_error_type(%struct_name{} = error) when is_exception(error),
-    do: Tracer.set_attribute(ErrorAttributes.error_type(), inspect(struct_name))
-
-  defp set_error_type(_error), do: :ok
 
   defp put_links(span_opts, []), do: span_opts
   defp put_links(span_opts, links), do: Map.put(span_opts, :links, links)

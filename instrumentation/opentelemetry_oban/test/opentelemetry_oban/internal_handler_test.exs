@@ -49,7 +49,8 @@ defmodule OpentelemetryOban.InternalHandlerTest do
                     )},
                    5_000
 
-    assert %{"messaging.system": :oban} = :otel_attributes.map(insert_attributes)
+    assert %{"messaging.system": :oban, "messaging.destination.name": "events"} =
+             :otel_attributes.map(insert_attributes)
 
     assert_receive {:span,
                     span(
@@ -86,6 +87,26 @@ defmodule OpentelemetryOban.InternalHandlerTest do
 
     assert message =~ "connection lost"
     assert %{"error.type": "RuntimeError"} = :otel_attributes.map(attributes)
+  end
+
+  test "a thrown engine failure fails its span without an error type" do
+    OpentelemetryOban.setup()
+
+    meta = %{conf: Oban.config(), engine: Oban.Engines.Basic}
+
+    catch_throw(
+      :telemetry.span([:oban, :engine, :fetch_jobs], meta, fn -> throw(:connection_lost) end)
+    )
+
+    assert_receive {:span,
+                    span(
+                      name: "oban.engine.fetch_jobs",
+                      status: {:status, :error, message},
+                      attributes: attributes
+                    )}
+
+    assert message =~ "connection_lost"
+    refute Map.has_key?(:otel_attributes.map(attributes), :"error.type")
   end
 
   test "internal: :disabled leaves the engine untraced" do

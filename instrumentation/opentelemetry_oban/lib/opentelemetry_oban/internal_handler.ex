@@ -2,15 +2,17 @@ defmodule OpentelemetryOban.InternalHandler do
   @moduledoc false
 
   alias OpenTelemetry.Span
-  alias OpenTelemetry.SemConv.ErrorAttributes
   alias OpenTelemetry.SemConv.Incubating.MessagingAttributes
+  alias OpentelemetryOban.Errors
 
   @tracer_id __MODULE__
 
   @events [
     [:engine, :init],
     [:engine, :refresh],
+    [:engine, :shutdown],
     [:engine, :put_meta],
+    [:engine, :check_meta],
     [:engine, :check_available],
     [:engine, :cancel_all_jobs],
     [:engine, :delete_all_jobs],
@@ -28,6 +30,7 @@ defmodule OpentelemetryOban.InternalHandler do
     [:engine, :insert_job],
     [:engine, :retry_job],
     [:engine, :snooze_job],
+    [:engine, :update_job],
     [:notifier, :notify],
     [:peer, :election]
   ]
@@ -36,63 +39,59 @@ defmodule OpentelemetryOban.InternalHandler do
     :telemetry.attach_many(
       {__MODULE__, :internal},
       Enum.flat_map(@events, fn event ->
-        [[:oban | event ++ [:start]], [:oban | event ++ [:stop]], [:oban | event ++ [:exception]]]
+        Enum.map([:start, :stop, :exception], &([:oban | event] ++ [&1]))
       end),
       &__MODULE__.handle_event/4,
       []
     )
   end
 
-  def handle_event([:oban | event], _measurements, metadata, _config) do
-    {phase, name} = List.pop_at(event, -1)
+  def handle_event([:oban, area, operation, :start], _measurements, metadata, _config) do
+    OpentelemetryTelemetry.start_telemetry_span(
+      @tracer_id,
+      "oban.#{area}.#{operation}",
+      metadata,
+      %{kind: :internal, attributes: attributes(metadata)}
+    )
+  end
 
-    case phase do
-      :start ->
-        OpentelemetryTelemetry.start_telemetry_span(
-          @tracer_id,
-          Enum.join([:oban | name], "."),
-          metadata,
-          %{kind: :internal, attributes: attributes(metadata)}
-        )
+  def handle_event([:oban, _area, _operation, :stop], _measurements, metadata, _config) do
+    OpentelemetryTelemetry.end_telemetry_span(@tracer_id, metadata)
+  end
 
-      :stop ->
-        OpentelemetryTelemetry.end_telemetry_span(@tracer_id, metadata)
+  def handle_event(
+        [:oban, _area, _operation, :exception],
+        _measurements,
+        %{kind: kind, reason: reason, stacktrace: stacktrace} = metadata,
+        _config
+      ) do
+    ctx = OpentelemetryTelemetry.set_current_telemetry_span(@tracer_id, metadata)
 
-      :exception ->
-        %{kind: kind, reason: reason, stacktrace: stacktrace} = metadata
-        ctx = OpentelemetryTelemetry.set_current_telemetry_span(@tracer_id, metadata)
-        exception = Exception.normalize(kind, reason, stacktrace)
+    ctx
+    |> Errors.record_exception(kind, reason, stacktrace)
+    |> Errors.set_error_type()
 
-        if is_exception(exception) do
-          Span.record_exception(ctx, exception, stacktrace, [])
-          Span.set_attribute(ctx, ErrorAttributes.error_type(), inspect(exception.__struct__))
-        else
-          Span.set_attribute(ctx, ErrorAttributes.error_type(), "_OTHER")
-        end
+    Span.set_status(
+      ctx,
+      OpenTelemetry.status(:error, Exception.format_banner(kind, reason, stacktrace))
+    )
 
-        Span.set_status(
-          ctx,
-          OpenTelemetry.status(:error, Exception.format_banner(kind, reason, stacktrace))
-        )
-
-        OpentelemetryTelemetry.end_telemetry_span(@tracer_id, metadata)
-    end
+    OpentelemetryTelemetry.end_telemetry_span(@tracer_id, metadata)
   end
 
   defp attributes(metadata) do
-    queue =
-      case metadata do
-        %{queue: queue} when not is_nil(queue) -> to_string(queue)
-        %{job: %{queue: queue}} -> queue
-        %{meta: %{queue: queue}} -> queue
-        %{changeset: %{changes: %{queue: queue}}} -> queue
-        _ -> nil
-      end
-
-    %{
-      MessagingAttributes.messaging_system() => :oban,
-      MessagingAttributes.messaging_destination_name() => queue
-    }
-    |> Map.reject(fn {_key, value} -> is_nil(value) end)
+    %{MessagingAttributes.messaging_system() => :oban}
+    |> put_queue(metadata)
   end
+
+  defp put_queue(attributes, %{job: %{queue: queue}}), do: put_destination(attributes, queue)
+  defp put_queue(attributes, %{meta: %{queue: queue}}), do: put_destination(attributes, queue)
+
+  defp put_queue(attributes, %{changeset: changeset}),
+    do: put_destination(attributes, Ecto.Changeset.get_field(changeset, :queue))
+
+  defp put_queue(attributes, _metadata), do: attributes
+
+  defp put_destination(attributes, queue),
+    do: Map.put(attributes, MessagingAttributes.messaging_destination_name(), queue)
 end
