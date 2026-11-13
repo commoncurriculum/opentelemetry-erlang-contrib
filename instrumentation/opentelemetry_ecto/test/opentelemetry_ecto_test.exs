@@ -389,7 +389,13 @@ defmodule OpentelemetryEctoTest do
                Enum.find(
                  datapoints,
                  &match?(
-                   histogram_datapoint(attributes: %{"db.collection.name": "users", "db.system.name": :postgresql}),
+                   histogram_datapoint(
+                     attributes: %{
+                       "db.collection.name": "users",
+                       "db.system.name": :postgresql,
+                       "server.address": "localhost"
+                     }
+                   ),
                    &1
                  )
                )
