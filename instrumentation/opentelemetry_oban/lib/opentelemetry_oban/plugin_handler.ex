@@ -3,7 +3,7 @@ defmodule OpentelemetryOban.PluginHandler do
 
   alias OpenTelemetry.Tracer
   alias OpenTelemetry.Span
-  alias OpenTelemetry.SemConv.ErrorAttributes
+  alias OpentelemetryOban.Errors
 
   @tracer_id __MODULE__
 
@@ -63,32 +63,16 @@ defmodule OpentelemetryOban.PluginHandler do
       ) do
     ctx = OpentelemetryTelemetry.set_current_telemetry_span(@tracer_id, metadata)
 
-    error = record_exception(ctx, kind, reason, stacktrace)
+    error = Errors.record_exception(ctx, kind, reason, stacktrace)
 
     Span.set_status(
       ctx,
       OpenTelemetry.status(:error, Exception.format_banner(kind, reason, stacktrace))
     )
 
-    set_error_type(error)
+    Errors.set_error_type(error)
 
     OpentelemetryTelemetry.end_telemetry_span(@tracer_id, metadata)
-  end
-
-  # `Exception.normalize/3` turns Erlang-style reasons (`:badarg`, `:undef`, ...) into Elixir
-  # exception structs, so `Span.record_exception/4` can record `exception.message`. Reasons that
-  # cannot be normalized (`:throw` and `:exit` kinds) fall back to the Erlang API, which accepts
-  # any term but records no message.
-  defp record_exception(ctx, kind, reason, stacktrace) do
-    case Exception.normalize(kind, reason, stacktrace) do
-      %{__exception__: true} = exception ->
-        Span.record_exception(ctx, exception, stacktrace, [])
-        exception
-
-      not_an_exception ->
-        :otel_span.record_exception(ctx, kind, reason, stacktrace, [])
-        not_an_exception
-    end
   end
 
   # Plugins report failure through the `{:error, meta}` return value of `:telemetry.span/3`, which
@@ -103,7 +87,7 @@ defmodule OpentelemetryOban.PluginHandler do
     reason = unwrap_error(error)
 
     Tracer.set_status(OpenTelemetry.status(:error, format_error(reason)))
-    set_error_type(reason)
+    Errors.set_error_type(reason)
   end
 
   defp maybe_record_stop_error(_metadata), do: :ok
@@ -115,11 +99,6 @@ defmodule OpentelemetryOban.PluginHandler do
 
   defp format_error(error) when is_exception(error), do: Exception.message(error)
   defp format_error(error), do: inspect(error)
-
-  defp set_error_type(%struct_name{} = error) when is_exception(error),
-    do: Tracer.set_attribute(ErrorAttributes.error_type(), inspect(struct_name))
-
-  defp set_error_type(_error), do: :ok
 
   # TODO: both of the following are candidates for a future breaking change, whenever a major
   # version is on the table.

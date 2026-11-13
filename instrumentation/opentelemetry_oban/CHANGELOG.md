@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+* Trace Oban's engine, notifier and peer work (`oban.engine.fetch_jobs`, `oban.engine.complete_job`,
+  `oban.peer.election`, ...) as internal spans, so the queries Oban makes have a parent span instead
+  of each starting its own trace. Off by default, since Oban polls every queue on every node; turn it on with `internal: []`.
+
 ### Fixed
 
 * Stop crashing and detaching the job handler for jobs run with `testing: :inline`.
