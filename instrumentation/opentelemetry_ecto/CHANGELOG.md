@@ -13,6 +13,7 @@
 
 ### Fixes
 
+- A failed query's status message and `exception.message` are its `error.type`, never the error's own message, which can quote row values. An exception with no database error code reports its module as `error.type` (e.g. `Exqlite.Error`), an atom reason reports itself, and any other reason reports `_OTHER`
 - Queries without a source are named `{operation} {db.namespace}` instead of ending in a blank target
 - A repo configured without `:database` (allowed by `ecto_ch`) is traced without `db.namespace` instead of crashing the handler, which detached it
 

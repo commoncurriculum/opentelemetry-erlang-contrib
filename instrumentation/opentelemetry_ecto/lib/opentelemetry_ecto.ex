@@ -386,14 +386,9 @@ defmodule OpentelemetryEcto do
   @doc false
   def default_metadata_preprocessor(meta), do: meta
 
-  # A database server's error message can quote the row's values; its error code can't.
-  defp error_message(error) do
-    case {error_type(error), error} do
-      {:_OTHER, %{__exception__: true}} -> Exception.message(error)
-      {:_OTHER, reason} -> inspect(reason)
-      {code, _error} -> to_string(code)
-    end
-  end
+  # An error's message, from the database server or the client, can quote the row's values; its
+  # error.type can't.
+  defp error_message(error), do: to_string(error_type(error))
 
   defp adapter(Ecto.Adapters.Postgres), do: %{system: :postgresql, default_port: 5432}
   defp adapter(Ecto.Adapters.MyXQL), do: %{system: :mysql, default_port: 3306}
@@ -472,6 +467,8 @@ defmodule OpentelemetryEcto do
   defp error_type(%{mysql: %{code: code}}), do: code
   defp error_type(%{mssql: %{number: number}}), do: number
   defp error_type(%{__struct__: Ch.Error, code: code}) when is_integer(code), do: code
+  defp error_type(%{__exception__: true, __struct__: exception}), do: inspect(exception)
+  defp error_type(reason) when is_atom(reason), do: reason
   defp error_type(_error), do: :_OTHER
 
   defp add_measurements(attributes, measurements) do
