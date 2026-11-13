@@ -95,6 +95,24 @@ defmodule OpentelemetryEctoTest do
     |> OpentelemetryEcto.setup()
   end
 
+  defp execute_failed_query(reason) do
+    :telemetry.execute(
+      [:opentelemetry_ecto, :test_repo, :query],
+      %{total_time: 1_000_000},
+      %{
+        type: :ecto_sql_query,
+        repo: Repo,
+        result: {:error, reason},
+        params: [],
+        cast_params: nil,
+        query: "SELECT * FROM users",
+        source: "users",
+        stacktrace: nil,
+        options: []
+      }
+    )
+  end
+
   defp clear_handlers do
     :telemetry.list_handlers([])
     |> Enum.reject(&match?(%{id: {OpentelemetryEcto, :init}}, &1))
@@ -665,9 +683,9 @@ defmodule OpentelemetryEctoTest do
                       events: events
                     )}
 
-    assert message =~ "no such column: u0.non_existent_field"
+    assert message == "Exqlite.Error"
 
-    assert %{unquote(ErrorAttributes.error_type()) => :_OTHER} =
+    assert %{unquote(ErrorAttributes.error_type()) => "Exqlite.Error"} =
              :otel_attributes.map(attributes)
 
     assert [event(name: :exception, attributes: exception_attributes)] =
@@ -675,10 +693,8 @@ defmodule OpentelemetryEctoTest do
 
     assert %{
              "exception.type": "Elixir.Exqlite.Error",
-             "exception.message": exception_message
+             "exception.message": "Exqlite.Error"
            } = :otel_attributes.map(exception_attributes)
-
-    assert exception_message =~ "no such column: u0.non_existent_field"
   end
 
   test "uses the real stacktrace from event metadata when stacktrace: true is set" do
@@ -700,33 +716,35 @@ defmodule OpentelemetryEctoTest do
     assert stacktrace =~ "test/opentelemetry_ecto_test.exs"
   end
 
-  test "falls back to inspect/1 for non-exception error reasons" do
+  test "uses an atom error reason as error.type and the status message" do
     setup_instrumentation()
-
-    :telemetry.execute(
-      [:opentelemetry_ecto, :test_repo, :query],
-      %{total_time: 1_000_000},
-      %{
-        type: :ecto_sql_query,
-        repo: Repo,
-        result: {:error, :rollback},
-        params: [],
-        cast_params: nil,
-        query: "SELECT * FROM users",
-        source: "users",
-        stacktrace: nil,
-        options: []
-      }
-    )
+    execute_failed_query(:rollback)
 
     assert_receive {:span,
                     span(
                       name: "SELECT users",
-                      status: {:status, :error, message},
+                      status: {:status, :error, "rollback"},
+                      attributes: attributes,
                       events: events
                     )}
 
-    assert message == inspect(:rollback)
+    assert %{unquote(ErrorAttributes.error_type()) => :rollback} = :otel_attributes.map(attributes)
+    assert :otel_events.list(events) == []
+  end
+
+  test "keeps any other error reason's values out of the span" do
+    setup_instrumentation()
+    execute_failed_query({:invalid_email, "someone@example.com"})
+
+    assert_receive {:span,
+                    span(
+                      name: "SELECT users",
+                      status: {:status, :error, "_OTHER"},
+                      attributes: attributes,
+                      events: events
+                    )}
+
+    assert %{unquote(ErrorAttributes.error_type()) => :_OTHER} = :otel_attributes.map(attributes)
     assert :otel_events.list(events) == []
   end
 
