@@ -12,6 +12,7 @@ defmodule OpentelemetryEctoTest do
   alias OpentelemetryEcto.MyXQLTestRepo, as: MyXQLRepo
   alias OpentelemetryEcto.Sqlite3TestRepo, as: Sqlite3Repo
   alias OpentelemetryEcto.TdsTestRepo, as: TdsRepo
+  alias OpentelemetryEcto.ClickhouseTestRepo, as: ClickhouseRepo
   alias OpentelemetryEcto.TestModels.{Comment, User, Post}
 
   require Ecto.Query, as: Query
@@ -20,6 +21,10 @@ defmodule OpentelemetryEctoTest do
   require Record
 
   for {name, spec} <- Record.extract_all(from_lib: "opentelemetry/include/otel_span.hrl") do
+    Record.defrecord(name, spec)
+  end
+
+  for {name, spec} <- Record.extract_all(from_lib: "opentelemetry_experimental/include/otel_metrics.hrl") do
     Record.defrecord(name, spec)
   end
 
@@ -32,6 +37,7 @@ defmodule OpentelemetryEctoTest do
     OpentelemetryEcto.MyXQLTestRepo.start_link()
     OpentelemetryEcto.TdsTestRepo.start_link()
     OpentelemetryEcto.Sqlite3TestRepo.start_link()
+    OpentelemetryEcto.ClickhouseTestRepo.start_link()
 
     Ecto.Migrator.with_repo(OpentelemetryEcto.TestRepo, &Ecto.Migrator.run(&1, :up, all: true))
 
@@ -69,6 +75,7 @@ defmodule OpentelemetryEctoTest do
       {:otel_batch_processor, %{scheduled_delay_ms: 1}}
     ])
 
+    :otel_batch_processor.force_flush(%{reg_name: :otel_batch_processor_global})
     :otel_batch_processor.set_exporter(:otel_exporter_pid, self())
 
     on_exit(fn ->
@@ -183,7 +190,7 @@ defmodule OpentelemetryEctoTest do
     end
 
     expected_attrs = [
-      {DBAttributes.db_system(), DBAttributes.db_system_values().postgresql},
+      {:"db.system.name", :postgresql},
       {DBAttributes.db_collection_name(), "users"},
       {DBAttributes.db_namespace(), "opentelemetry_ecto_test"},
       {ServerAttributes.server_address(), "localhost"},
@@ -225,7 +232,7 @@ defmodule OpentelemetryEctoTest do
     end
 
     expected_attrs = [
-      {DBAttributes.db_system(), DBAttributes.db_system_values().mysql},
+      {:"db.system.name", :mysql},
       {DBAttributes.db_collection_name(), "users"},
       {DBAttributes.db_namespace(), "opentelemetry_ecto_test"},
       {ServerAttributes.server_address(), "localhost"},
@@ -267,7 +274,7 @@ defmodule OpentelemetryEctoTest do
     end
 
     expected_attrs = [
-      {DBAttributes.db_system(), DBAttributes.db_system_values().mssql},
+      {:"db.system.name", :"microsoft.sql_server"},
       {DBAttributes.db_collection_name(), "users"},
       {DBAttributes.db_namespace(), "opentelemetry_ecto_test"},
       {ServerAttributes.server_address(), "localhost"},
@@ -309,7 +316,7 @@ defmodule OpentelemetryEctoTest do
     end
 
     expected_attrs = [
-      {DBAttributes.db_system(), DBAttributes.db_system_values().sqlite},
+      {:"db.system.name", :sqlite},
       {DBAttributes.db_collection_name(), "users"},
       {DBAttributes.db_namespace(), "opentelemetry_ecto_test.db"},
       {ServerAttributes.server_address(), "opentelemetry_ecto_test.db"},
@@ -323,8 +330,116 @@ defmodule OpentelemetryEctoTest do
     end
   end
 
+  test "a query without a source is named after its operation and database" do
+    setup_instrumentation()
+
+    Repo.query!("SELECT 1")
+
+    assert_receive {:span, span(name: "SELECT opentelemetry_ecto_test", kind: :client)}
+  end
+
+  test "captures basic query events - clickhouse" do
+    setup_instrumentation(event_prefix: [:opentelemetry_ecto, :clickhouse_test_repo])
+
+    ClickhouseRepo.query!("SELECT 1")
+
+    assert_receive {:span, span(name: "SELECT", attributes: attributes, kind: :client)}
+
+    attrs = :otel_attributes.map(attributes)
+
+    assert %{
+             "db.system.name": :clickhouse,
+             "server.address": "localhost"
+           } = attrs
+
+    refute Map.has_key?(attrs, :"db.namespace")
+
+    refute Map.has_key?(attrs, ServerAttributes.server_port())
+  end
+
+  test "sets error type on error - clickhouse" do
+    setup_instrumentation(event_prefix: [:opentelemetry_ecto, :clickhouse_test_repo])
+
+    {:error, _} = ClickhouseRepo.query("SELECT * FROM opentelemetry_ecto_no_such_table")
+
+    assert_receive {:span, span(status: {:status, :error, _message}, attributes: attributes)}
+
+    assert %{unquote(ErrorAttributes.error_type()) => 60} = :otel_attributes.map(attributes)
+  end
+
+  describe "db.client.operation.duration" do
+    setup do
+      Process.register(self(), :otel_ecto_metric_test)
+      :ok
+    end
+
+    test "is recorded for each query with the span's low-cardinality attributes" do
+      setup_instrumentation()
+
+      Repo.all(User)
+      :otel_meter_server.force_flush()
+
+      assert_receive {:otel_metric,
+                      metric(
+                        name: :"db.client.operation.duration",
+                        unit: :s,
+                        data: histogram(datapoints: datapoints)
+                      )}
+
+      assert histogram_datapoint(attributes: attributes, count: count, sum: sum) =
+               Enum.find(
+                 datapoints,
+                 &match?(
+                   histogram_datapoint(
+                     attributes: %{
+                       "db.collection.name": "users",
+                       "db.system.name": :postgresql,
+                       "db.operation.name": :SELECT,
+                       "server.address": "localhost"
+                     }
+                   ),
+                   &1
+                 )
+               )
+
+      assert count >= 1 and sum > 0
+
+      assert %{
+               "db.system.name": :postgresql,
+               "db.namespace": "opentelemetry_ecto_test",
+               "db.operation.name": :SELECT,
+               "server.address": "localhost"
+             } = attributes
+
+      refute Map.has_key?(attributes, :"db.query.text")
+      refute Map.has_key?(attributes, :"ecto.total_time.duration")
+    end
+
+    test "carries error.type for a failed query" do
+      setup_instrumentation()
+
+      try do
+        Repo.all(from(u in "comments", select: u.non_existent_field))
+      rescue
+        _ -> :ok
+      end
+
+      :otel_meter_server.force_flush()
+
+      assert_receive {:otel_metric,
+                      metric(name: :"db.client.operation.duration", data: histogram(datapoints: datapoints))}
+
+      assert Enum.any?(
+               datapoints,
+               &match?(histogram_datapoint(attributes: %{"error.type": :undefined_column}), &1)
+             )
+    end
+  end
+
   test "allow per-request options via telemetry_options" do
-    setup_instrumentation(additional_span_attributes: %{"config.attribute": "special value", "db.system": "my_system"})
+    setup_instrumentation(
+      additional_span_attributes: %{"config.attribute": "special value", "db.system.name": "my_system"}
+    )
 
     Repo.all(User,
       telemetry_options: [
@@ -332,7 +447,7 @@ defmodule OpentelemetryEctoTest do
           span_name: "custom span name",
           attributes: %{
             "config.attribute": "special value overwritten",
-            "db.system": "my_system",
+            "db.system.name": "my_system",
             "db.query.summary": "custom summary",
             extra: "should add"
           }
@@ -345,7 +460,7 @@ defmodule OpentelemetryEctoTest do
     # don't merge instrumentation-set attrs but can overwrite config set
     assert %{
              "config.attribute": "special value overwritten",
-             "db.system": :postgresql,
+             "db.system.name": :postgresql,
              "db.query.summary": "custom summary",
              extra: "should add"
            } =
@@ -387,14 +502,16 @@ defmodule OpentelemetryEctoTest do
   end
 
   test "include additional_attributes" do
-    setup_instrumentation(additional_span_attributes: %{"config.attribute": "special value", "db.system": "my_system"})
+    setup_instrumentation(
+      additional_span_attributes: %{"config.attribute": "special value", "db.system.name": "my_system"}
+    )
 
     Repo.all(User)
 
     assert_receive {:span, span(attributes: attributes)}
 
     # don't merge instrumentation-set attrs
-    assert %{"config.attribute": "special value", "db.system": :postgresql} =
+    assert %{"config.attribute": "special value", "db.system.name": :postgresql} =
              :otel_attributes.map(attributes)
   end
 

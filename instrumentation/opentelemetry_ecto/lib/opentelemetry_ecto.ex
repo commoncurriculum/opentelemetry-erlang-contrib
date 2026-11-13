@@ -1,8 +1,10 @@
 defmodule OpentelemetryEcto do
   require OpenTelemetry.Tracer
+  require OpenTelemetryAPIExperimental.Histogram, as: Histogram
 
   alias OpenTelemetry.SemConv.ErrorAttributes
   alias OpenTelemetry.SemConv.Incubating.DBAttributes
+  alias OpenTelemetry.SemConv.Incubating.Metrics.DBMetrics
   alias OpenTelemetry.SemConv.ServerAttributes
 
   alias OpentelemetryEcto.EctoAttributes
@@ -89,6 +91,9 @@ defmodule OpentelemetryEcto do
   ## Semantic Conventions
 
   All required and recommended DB Client Call Span semantic conventions are implemented.
+
+  Each query also records the `db.client.operation.duration` histogram, in seconds, with the
+  span's low-cardinality attributes.
   Supported opt-in attributes can be configured using the `opt_in_attrs` option.
 
   > #### Note {: .info}
@@ -133,7 +138,7 @@ defmodule OpentelemetryEcto do
         span_name: "custom span name",
         attributes: %{
           "config.attribute": "special value overwritten",
-          "db.system": "my_system",
+          "db.system.name": "my_system",
           extra: "should add"
         }
       }
@@ -177,6 +182,16 @@ defmodule OpentelemetryEcto do
 
   @type opt_out_attrs() :: [opt_out_attr()]
 
+  @metric_attributes [
+    :"db.system.name",
+    DBAttributes.db_namespace(),
+    DBAttributes.db_operation_name(),
+    DBAttributes.db_collection_name(),
+    ServerAttributes.server_address(),
+    ServerAttributes.server_port(),
+    ErrorAttributes.error_type()
+  ]
+
   @type options() :: [unquote(NimbleOptions.option_typespec(@options_schema))]
 
   @doc """
@@ -190,6 +205,14 @@ defmodule OpentelemetryEcto do
       opts
       |> NimbleOptions.validate!(@options_schema)
       |> Enum.into(%{})
+
+    Histogram.create(DBMetrics.db_client_operation_duration(), %{
+      unit: :s,
+      description: "Duration of database client operations.",
+      advisory_params: %{
+        explicit_bucket_boundaries: [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+      }
+    })
 
     event = config.event_prefix ++ [:query]
 
@@ -286,16 +309,26 @@ defmodule OpentelemetryEcto do
 
     attributes =
       %{
-        unquote(DBAttributes.db_system()) => db_system(repo.__adapter__()),
-        unquote(DBAttributes.db_namespace()) => repo_config.database,
+        :"db.system.name" => db_system_name(repo.__adapter__()),
+        unquote(DBAttributes.db_namespace()) => Map.get(repo_config, :database),
         unquote(DBAttributes.db_query_text()) => query
       }
+      |> Map.reject(fn {_key, value} -> is_nil(value) end)
       |> set_db_query_text(query, type)
       |> set_db_collection_name(source)
       |> set_server_address(repo, repo_config)
       |> maybe_add_server_port(repo.__adapter__(), repo_config)
       |> set_db_operation_name(query, type)
       |> maybe_add_error_type(repo.__adapter__(), query_result)
+
+    Histogram.record(
+      DBMetrics.db_client_operation_duration(),
+      native_to_seconds(total_time),
+      Map.take(attributes, @metric_attributes)
+    )
+
+    attributes =
+      attributes
       |> add_measurements(measurements)
       |> set_additional_attributes(config, per_query_opts)
 
@@ -362,19 +395,16 @@ defmodule OpentelemetryEcto do
     end
   end
 
-  db_systems = [
-    {Ecto.Adapters.Postgres, DBAttributes.db_system_values().postgresql},
-    {Ecto.Adapters.MyXQL, DBAttributes.db_system_values().mysql},
-    {Ecto.Adapters.SQLite3, DBAttributes.db_system_values().sqlite},
-    {Ecto.Adapters.Tds, DBAttributes.db_system_values().mssql}
-  ]
+  defp db_system_name(Ecto.Adapters.Postgres), do: :postgresql
+  defp db_system_name(Ecto.Adapters.MyXQL), do: :mysql
+  defp db_system_name(Ecto.Adapters.SQLite3), do: :sqlite
+  defp db_system_name(Ecto.Adapters.Tds), do: :"microsoft.sql_server"
+  defp db_system_name(Ecto.Adapters.ClickHouse), do: :clickhouse
 
-  for {adapter, system} <- db_systems do
-    defp db_system(unquote(adapter)), do: unquote(system)
-  end
+  # NOTE: This is the catch-all clause where we use other_sql as the db.system.name value, but it may not be a SQL based database.
+  defp db_system_name(_), do: :other_sql
 
-  # NOTE: This is the catch-all clause where we use other_sql as the db.system value, but it may not be a SQL based database.
-  defp db_system(_), do: DBAttributes.db_system_values().other_sql
+  defp set_db_collection_name(attributes, nil), do: attributes
 
   defp set_db_collection_name(attributes, source) do
     Map.put(attributes, DBAttributes.db_collection_name(), source)
@@ -387,6 +417,7 @@ defmodule OpentelemetryEcto do
       {Ecto.Adapters.Postgres, 5432} -> attributes
       {Ecto.Adapters.MyXQL, 3306} -> attributes
       {Ecto.Adapters.Tds, 1433} -> attributes
+      {Ecto.Adapters.ClickHouse, 8123} -> attributes
       {Ecto.Adapters.SQLite3, _} -> attributes
       {_, port} -> Map.put(attributes, ServerAttributes.server_port(), port)
     end
@@ -448,6 +479,7 @@ defmodule OpentelemetryEcto do
   defp get_error_type(Ecto.Adapters.Postgres, %{postgres: %{code: code}}), do: code
   defp get_error_type(Ecto.Adapters.MyXQL, %{mysql: %{code: code}}), do: code
   defp get_error_type(Ecto.Adapters.Tds, %{mssql: %{number: number}}), do: number
+  defp get_error_type(Ecto.Adapters.ClickHouse, %{code: code}) when is_integer(code), do: code
   defp get_error_type(Ecto.Adapters.SQLite3, _), do: :_OTHER
   defp get_error_type(_adapter, _), do: :_OTHER
 
@@ -455,16 +487,14 @@ defmodule OpentelemetryEcto do
     measurements
     |> Enum.reduce(attributes, fn
       {k, v}, attrs when not is_nil(v) ->
-        set_measurement(
-          attrs,
-          k,
-          System.convert_time_unit(v, :native, :nanosecond) / 1_000_000_000
-        )
+        set_measurement(attrs, k, native_to_seconds(v))
 
       _, attrs ->
         attrs
     end)
   end
+
+  defp native_to_seconds(time), do: System.convert_time_unit(time, :native, :nanosecond) / 1_000_000_000
 
   defp set_measurement(attrs, :total_time, time) do
     Map.put(attrs, unquote(EctoAttributes.ecto_total_time_duration()), time)
@@ -525,10 +555,10 @@ defmodule OpentelemetryEcto do
          %{unquote(DBAttributes.db_operation_name()) => db_operation_name} = attributes,
          _
        ),
-       do: "#{db_operation_name} #{target(attributes)}"
+       do: Enum.join(Enum.reject([db_operation_name, target(attributes)], &is_nil/1), " ")
 
   # If there is no (low-cardinality) `db.operation.name` available, database span names SHOULD be `{target}`.
-  defp span_name(attributes, _), do: target(attributes)
+  defp span_name(attributes, _), do: target(attributes) || to_string(attributes[:"db.system.name"])
 
   # `db.collection.name` SHOULD be used for data manipulation operations or operations on database collections.
   defp target(%{unquote(DBAttributes.db_collection_name()) => db_collection_name}),
@@ -536,4 +566,5 @@ defmodule OpentelemetryEcto do
 
   # `db.namespace` SHOULD be used for operations on a specific database namespace.
   defp target(%{unquote(DBAttributes.db_namespace()) => db_namespace}), do: db_namespace
+  defp target(_attributes), do: nil
 end

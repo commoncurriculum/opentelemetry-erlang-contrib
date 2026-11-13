@@ -72,14 +72,17 @@ defmodule OpentelemetryEcto.MixProject do
       {:opentelemetry_api, "~> 1.4"},
       {:opentelemetry_process_propagator, "~> 0.3"},
       {:opentelemetry_semantic_conventions, "~> 1.27"},
+      {:opentelemetry_api_experimental, "~> 0.6"},
       {:opentelemetry, "== 1.7.0", only: [:dev, :test]},
       {:opentelemetry_exporter, "== 1.11.0", only: [:dev, :test]},
+      {:opentelemetry_experimental, "== 0.6.0", only: [:dev, :test]},
       {:ex_doc, "== 0.40.4", only: [:dev], runtime: false},
       {:ecto_sqlite3, "== 0.26.0", only: [:dev, :test]},
       {:ecto_sql, "== 3.14.0", only: [:dev, :test]},
       {:postgrex, "== 0.22.4", only: [:dev, :test]},
       {:myxql, "== 0.9.0", only: [:dev, :test]},
       {:tds, "== 2.3.8", only: [:dev, :test]},
+      {:ecto_ch, "== 0.11.1", only: [:dev, :test]},
       {:dialyxir, "== 1.4.8", only: [:dev, :test], runtime: false}
     ]
   end
