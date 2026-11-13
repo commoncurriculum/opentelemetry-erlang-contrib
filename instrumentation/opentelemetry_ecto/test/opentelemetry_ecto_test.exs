@@ -393,6 +393,7 @@ defmodule OpentelemetryEctoTest do
                      attributes: %{
                        "db.collection.name": "users",
                        "db.system.name": :postgresql,
+                       "db.operation.name": :SELECT,
                        "server.address": "localhost"
                      }
                    ),
