@@ -31,6 +31,8 @@ defmodule OpentelemetryOban do
 
   @type plugin_options() :: [] | :disabled
 
+  @type internal_options() :: [] | :disabled
+
   @options_schema [
     job: [
       type:
@@ -50,6 +52,16 @@ defmodule OpentelemetryOban do
       type_spec: quote(do: plugin_options()),
       default: [],
       doc: "Plugin handler configuration. Set to `:disabled` to skip plugin handler setup."
+    ],
+    internal: [
+      type: {:in, [[], :disabled]},
+      type_spec: quote(do: internal_options()),
+      default: [],
+      doc: """
+      Internal handler configuration. Traces Oban's engine, notifier and peer work, such as
+      fetching, staging and acknowledging jobs, so the queries it makes have a parent span.
+      Set to `:disabled` to skip internal handler setup.
+      """
     ]
   ]
 
@@ -81,6 +93,10 @@ defmodule OpentelemetryOban do
 
     if opts.plugin != :disabled do
       OpentelemetryOban.PluginHandler.attach()
+    end
+
+    if opts.internal != :disabled do
+      OpentelemetryOban.InternalHandler.attach()
     end
 
     :ok
