@@ -307,19 +307,19 @@ defmodule OpentelemetryEcto do
     repo_config =
       get_repo_metadata({repo, config.event_prefix}, config.repo_metadata_storage)
 
+    adapter = adapter(repo.__adapter__())
+
     attributes =
       %{
-        :"db.system.name" => db_system_name(repo.__adapter__()),
+        :"db.system.name" => adapter.system,
         unquote(DBAttributes.db_namespace()) => Map.get(repo_config, :database),
-        unquote(DBAttributes.db_query_text()) => query
+        unquote(DBAttributes.db_query_text()) => query,
+        unquote(DBAttributes.db_collection_name()) => source
       }
+      |> Map.merge(server_attributes(adapter, repo_config))
       |> Map.reject(fn {_key, value} -> is_nil(value) end)
-      |> set_db_query_text(query, type)
-      |> set_db_collection_name(source)
-      |> set_server_address(repo, repo_config)
-      |> maybe_add_server_port(repo.__adapter__(), repo_config)
       |> set_db_operation_name(query, type)
-      |> maybe_add_error_type(repo.__adapter__(), query_result)
+      |> maybe_add_error_type(query_result)
 
     Histogram.record(
       DBMetrics.db_client_operation_duration(),
@@ -385,42 +385,25 @@ defmodule OpentelemetryEcto do
 
   defp format_error(reason), do: inspect(reason)
 
-  defp set_server_address(attrs, repo, repo_config) do
-    case repo.__adapter__() do
-      Ecto.Adapters.SQLite3 ->
-        Map.put(attrs, ServerAttributes.server_address(), repo_config.database)
+  defp adapter(Ecto.Adapters.Postgres), do: %{system: :postgresql, default_port: 5432}
+  defp adapter(Ecto.Adapters.MyXQL), do: %{system: :mysql, default_port: 3306}
+  defp adapter(Ecto.Adapters.Tds), do: %{system: :"microsoft.sql_server", default_port: 1433}
+  defp adapter(Ecto.Adapters.ClickHouse), do: %{system: :clickhouse, default_port: 8123}
+  defp adapter(Ecto.Adapters.SQLite3), do: %{system: :sqlite, file: true}
+  # other_sql may not be accurate: an unknown adapter may not be a SQL database.
+  defp adapter(_), do: %{system: :other_sql, default_port: nil}
 
-      _ ->
-        Map.put(attrs, ServerAttributes.server_address(), repo_config.hostname)
-    end
+  defp server_attributes(%{file: true}, repo_config) do
+    %{ServerAttributes.server_address() => Map.get(repo_config, :database)}
   end
 
-  defp db_system_name(Ecto.Adapters.Postgres), do: :postgresql
-  defp db_system_name(Ecto.Adapters.MyXQL), do: :mysql
-  defp db_system_name(Ecto.Adapters.SQLite3), do: :sqlite
-  defp db_system_name(Ecto.Adapters.Tds), do: :"microsoft.sql_server"
-  defp db_system_name(Ecto.Adapters.ClickHouse), do: :clickhouse
+  defp server_attributes(%{default_port: default_port}, repo_config) do
+    port = Map.get(repo_config, :port)
 
-  # NOTE: This is the catch-all clause where we use other_sql as the db.system.name value, but it may not be a SQL based database.
-  defp db_system_name(_), do: :other_sql
-
-  defp set_db_collection_name(attributes, nil), do: attributes
-
-  defp set_db_collection_name(attributes, source) do
-    Map.put(attributes, DBAttributes.db_collection_name(), source)
-  end
-
-  # only set port for non-standard ports
-  defp maybe_add_server_port(attributes, adapter, repo_config) do
-    case {adapter, Map.get(repo_config, :port)} do
-      {_, nil} -> attributes
-      {Ecto.Adapters.Postgres, 5432} -> attributes
-      {Ecto.Adapters.MyXQL, 3306} -> attributes
-      {Ecto.Adapters.Tds, 1433} -> attributes
-      {Ecto.Adapters.ClickHouse, 8123} -> attributes
-      {Ecto.Adapters.SQLite3, _} -> attributes
-      {_, port} -> Map.put(attributes, ServerAttributes.server_port(), port)
-    end
+    %{
+      ServerAttributes.server_address() => Map.get(repo_config, :hostname),
+      ServerAttributes.server_port() => if(port != default_port, do: port)
+    }
   end
 
   defp set_db_operation_name(attributes, query, :ecto_sql_query) do
@@ -469,19 +452,17 @@ defmodule OpentelemetryEcto do
   # Fallback clause for unrecognized commands
   defp extract_sql_command(_query), do: :UNKNOWN
 
-  defp maybe_add_error_type(attributes, _adapter, {:ok, _}), do: attributes
+  defp maybe_add_error_type(attributes, {:ok, _}), do: attributes
 
-  defp maybe_add_error_type(attributes, adapter, {:error, error}) do
-    error_type = get_error_type(adapter, error)
-    Map.put(attributes, unquote(ErrorAttributes.error_type()), error_type)
+  defp maybe_add_error_type(attributes, {:error, error}) do
+    Map.put(attributes, unquote(ErrorAttributes.error_type()), error_type(error))
   end
 
-  defp get_error_type(Ecto.Adapters.Postgres, %{postgres: %{code: code}}), do: code
-  defp get_error_type(Ecto.Adapters.MyXQL, %{mysql: %{code: code}}), do: code
-  defp get_error_type(Ecto.Adapters.Tds, %{mssql: %{number: number}}), do: number
-  defp get_error_type(Ecto.Adapters.ClickHouse, %{code: code}) when is_integer(code), do: code
-  defp get_error_type(Ecto.Adapters.SQLite3, _), do: :_OTHER
-  defp get_error_type(_adapter, _), do: :_OTHER
+  defp error_type(%{postgres: %{code: code}}), do: code
+  defp error_type(%{mysql: %{code: code}}), do: code
+  defp error_type(%{mssql: %{number: number}}), do: number
+  defp error_type(%{__struct__: Ch.Error, code: code}) when is_integer(code), do: code
+  defp error_type(_error), do: :_OTHER
 
   defp add_measurements(attributes, measurements) do
     measurements
@@ -517,12 +498,6 @@ defmodule OpentelemetryEcto do
   end
 
   defp set_measurement(attrs, _measurement, _time), do: attrs
-
-  defp set_db_query_text(attributes, query, :ecto_sql_query) do
-    Map.put(attributes, unquote(DBAttributes.db_query_text()), query)
-  end
-
-  defp set_db_query_text(attributes, _, _), do: attributes
 
   defp set_additional_attributes(attrs, %{additional_span_attributes: extra}, %{
          attributes: per_query_attrs
