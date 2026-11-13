@@ -125,7 +125,7 @@ defmodule OpentelemetryMongodbDriver do
     start_time = end_time - System.convert_time_unit(duration, :microsecond, :native)
 
     operation = to_string(metadata.command)
-    collection = collection(metadata.collection)
+    collection = metadata.collection
     error = Map.get(metadata, :error)
     status_code = status_code(error)
 
@@ -190,17 +190,6 @@ defmodule OpentelemetryMongodbDriver do
 
   defp span_name(operation, nil), do: operation
   defp span_name(operation, collection), do: "#{operation} #{collection}"
-
-  defp collection("-"), do: nil
-
-  defp collection(collection) when is_binary(collection) do
-    case Integer.parse(collection) do
-      {_, ""} -> nil
-      _ -> collection
-    end
-  end
-
-  defp collection(_collection), do: nil
 
   defp status_code(%{__struct__: Mongo.Error, code: code}) when is_integer(code),
     do: Integer.to_string(code)
