@@ -366,9 +366,12 @@ defmodule OpentelemetryEcto do
   defp db_system_name(Ecto.Adapters.MyXQL), do: :mysql
   defp db_system_name(Ecto.Adapters.SQLite3), do: :sqlite
   defp db_system_name(Ecto.Adapters.Tds), do: :"microsoft.sql_server"
+  defp db_system_name(Ecto.Adapters.ClickHouse), do: :clickhouse
 
   # NOTE: This is the catch-all clause where we use other_sql as the db.system.name value, but it may not be a SQL based database.
   defp db_system_name(_), do: :other_sql
+
+  defp set_db_collection_name(attributes, nil), do: attributes
 
   defp set_db_collection_name(attributes, source) do
     Map.put(attributes, DBAttributes.db_collection_name(), source)
@@ -381,6 +384,7 @@ defmodule OpentelemetryEcto do
       {Ecto.Adapters.Postgres, 5432} -> attributes
       {Ecto.Adapters.MyXQL, 3306} -> attributes
       {Ecto.Adapters.Tds, 1433} -> attributes
+      {Ecto.Adapters.ClickHouse, 8123} -> attributes
       {Ecto.Adapters.SQLite3, _} -> attributes
       {_, port} -> Map.put(attributes, ServerAttributes.server_port(), port)
     end
@@ -442,6 +446,7 @@ defmodule OpentelemetryEcto do
   defp get_error_type(Ecto.Adapters.Postgres, %{postgres: %{code: code}}), do: code
   defp get_error_type(Ecto.Adapters.MyXQL, %{mysql: %{code: code}}), do: code
   defp get_error_type(Ecto.Adapters.Tds, %{mssql: %{number: number}}), do: number
+  defp get_error_type(Ecto.Adapters.ClickHouse, %{code: code}) when is_integer(code), do: code
   defp get_error_type(Ecto.Adapters.SQLite3, _), do: :_OTHER
   defp get_error_type(_adapter, _), do: :_OTHER
 

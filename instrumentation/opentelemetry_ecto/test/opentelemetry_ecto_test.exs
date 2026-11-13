@@ -12,6 +12,7 @@ defmodule OpentelemetryEctoTest do
   alias OpentelemetryEcto.MyXQLTestRepo, as: MyXQLRepo
   alias OpentelemetryEcto.Sqlite3TestRepo, as: Sqlite3Repo
   alias OpentelemetryEcto.TdsTestRepo, as: TdsRepo
+  alias OpentelemetryEcto.ClickhouseTestRepo, as: ClickhouseRepo
   alias OpentelemetryEcto.TestModels.{Comment, User, Post}
 
   require Ecto.Query, as: Query
@@ -32,6 +33,7 @@ defmodule OpentelemetryEctoTest do
     OpentelemetryEcto.MyXQLTestRepo.start_link()
     OpentelemetryEcto.TdsTestRepo.start_link()
     OpentelemetryEcto.Sqlite3TestRepo.start_link()
+    OpentelemetryEcto.ClickhouseTestRepo.start_link()
 
     Ecto.Migrator.with_repo(OpentelemetryEcto.TestRepo, &Ecto.Migrator.run(&1, :up, all: true))
 
@@ -321,6 +323,34 @@ defmodule OpentelemetryEctoTest do
       actual = Map.get(attrs, attr)
       assert expected == actual, "#{attr} expected #{expected} got #{actual}"
     end
+  end
+
+  test "captures basic query events - clickhouse" do
+    setup_instrumentation(event_prefix: [:opentelemetry_ecto, :clickhouse_test_repo])
+
+    ClickhouseRepo.query!("SELECT 1")
+
+    assert_receive {:span, span(name: "SELECT default", attributes: attributes, kind: :client)}
+
+    attrs = :otel_attributes.map(attributes)
+
+    assert %{
+             "db.system.name": :clickhouse,
+             "db.namespace": "default",
+             "server.address": "localhost"
+           } = attrs
+
+    refute Map.has_key?(attrs, ServerAttributes.server_port())
+  end
+
+  test "sets error type on error - clickhouse" do
+    setup_instrumentation(event_prefix: [:opentelemetry_ecto, :clickhouse_test_repo])
+
+    {:error, _} = ClickhouseRepo.query("SELECT * FROM opentelemetry_ecto_no_such_table")
+
+    assert_receive {:span, span(status: {:status, :error, _message}, attributes: attributes)}
+
+    assert %{unquote(ErrorAttributes.error_type()) => 60} = :otel_attributes.map(attributes)
   end
 
   test "allow per-request options via telemetry_options" do

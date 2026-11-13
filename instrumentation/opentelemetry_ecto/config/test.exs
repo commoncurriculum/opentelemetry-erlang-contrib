@@ -54,3 +54,8 @@ config :opentelemetry_ecto,
 
 config :opentelemetry,
   processors: [{:otel_batch_processor, %{scheduled_delay_ms: 1}}]
+
+config :opentelemetry_ecto, OpentelemetryEcto.ClickhouseTestRepo,
+  database: "default",
+  hostname: "localhost",
+  port: 8123

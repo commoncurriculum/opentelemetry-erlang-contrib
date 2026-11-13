@@ -214,6 +214,12 @@ jobs:
           MSSQL_SA_PASSWORD: MSSQLpass1!
         ports:
           - 1433:1433
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8@sha256:0152dd511befe6a2c2ef53e930726179669b08116da78500b37c51c96ff5ee77
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: 1
+        ports:
+          - 8123:8123
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

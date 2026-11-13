@@ -6,6 +6,14 @@
 
 - `db.system` is replaced by the stable `db.system.name`, with SQL Server reported as `microsoft.sql_server`
 
+### Features
+
+- ClickHouse (`ecto_ch`) is reported as `clickhouse`, with its error code as `error.type`
+
+### Fixes
+
+- Queries without a source are named `{operation} {db.namespace}` instead of ending in a blank target
+
 ## 2.0.0-beta.1
 
 ## Features
