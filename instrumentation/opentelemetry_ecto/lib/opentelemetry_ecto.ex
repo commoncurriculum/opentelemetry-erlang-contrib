@@ -4,6 +4,7 @@ defmodule OpentelemetryEcto do
 
   alias OpenTelemetry.SemConv.ErrorAttributes
   alias OpenTelemetry.SemConv.Incubating.DBAttributes
+  alias OpenTelemetry.SemConv.Incubating.Metrics.DBMetrics
   alias OpenTelemetry.SemConv.ServerAttributes
 
   alias OpentelemetryEcto.EctoAttributes
@@ -205,7 +206,7 @@ defmodule OpentelemetryEcto do
       |> NimbleOptions.validate!(@options_schema)
       |> Enum.into(%{})
 
-    Histogram.create(:"db.client.operation.duration", %{
+    Histogram.create(DBMetrics.db_client_operation_duration(), %{
       unit: :s,
       description: "Duration of database client operations.",
       advisory_params: %{
@@ -309,9 +310,10 @@ defmodule OpentelemetryEcto do
     attributes =
       %{
         :"db.system.name" => db_system_name(repo.__adapter__()),
-        unquote(DBAttributes.db_namespace()) => repo_config.database,
+        unquote(DBAttributes.db_namespace()) => Map.get(repo_config, :database),
         unquote(DBAttributes.db_query_text()) => query
       }
+      |> Map.reject(fn {_key, value} -> is_nil(value) end)
       |> set_db_query_text(query, type)
       |> set_db_collection_name(source)
       |> set_server_address(repo, repo_config)
@@ -320,8 +322,8 @@ defmodule OpentelemetryEcto do
       |> maybe_add_error_type(repo.__adapter__(), query_result)
 
     Histogram.record(
-      :"db.client.operation.duration",
-      System.convert_time_unit(total_time, :native, :nanosecond) / 1_000_000_000,
+      DBMetrics.db_client_operation_duration(),
+      native_to_seconds(total_time),
       Map.take(attributes, @metric_attributes)
     )
 
@@ -485,16 +487,14 @@ defmodule OpentelemetryEcto do
     measurements
     |> Enum.reduce(attributes, fn
       {k, v}, attrs when not is_nil(v) ->
-        set_measurement(
-          attrs,
-          k,
-          System.convert_time_unit(v, :native, :nanosecond) / 1_000_000_000
-        )
+        set_measurement(attrs, k, native_to_seconds(v))
 
       _, attrs ->
         attrs
     end)
   end
+
+  defp native_to_seconds(time), do: System.convert_time_unit(time, :native, :nanosecond) / 1_000_000_000
 
   defp set_measurement(attrs, :total_time, time) do
     Map.put(attrs, unquote(EctoAttributes.ecto_total_time_duration()), time)
@@ -555,10 +555,10 @@ defmodule OpentelemetryEcto do
          %{unquote(DBAttributes.db_operation_name()) => db_operation_name} = attributes,
          _
        ),
-       do: "#{db_operation_name} #{target(attributes)}"
+       do: Enum.join(Enum.reject([db_operation_name, target(attributes)], &is_nil/1), " ")
 
   # If there is no (low-cardinality) `db.operation.name` available, database span names SHOULD be `{target}`.
-  defp span_name(attributes, _), do: target(attributes)
+  defp span_name(attributes, _), do: target(attributes) || to_string(attributes[:"db.system.name"])
 
   # `db.collection.name` SHOULD be used for data manipulation operations or operations on database collections.
   defp target(%{unquote(DBAttributes.db_collection_name()) => db_collection_name}),
@@ -566,4 +566,5 @@ defmodule OpentelemetryEcto do
 
   # `db.namespace` SHOULD be used for operations on a specific database namespace.
   defp target(%{unquote(DBAttributes.db_namespace()) => db_namespace}), do: db_namespace
+  defp target(_attributes), do: nil
 end

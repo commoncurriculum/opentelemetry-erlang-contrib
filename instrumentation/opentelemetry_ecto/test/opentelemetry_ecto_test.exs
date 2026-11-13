@@ -329,20 +329,29 @@ defmodule OpentelemetryEctoTest do
     end
   end
 
+  test "a query without a source is named after its operation and database" do
+    setup_instrumentation()
+
+    Repo.query!("SELECT 1")
+
+    assert_receive {:span, span(name: "SELECT opentelemetry_ecto_test", kind: :client)}
+  end
+
   test "captures basic query events - clickhouse" do
     setup_instrumentation(event_prefix: [:opentelemetry_ecto, :clickhouse_test_repo])
 
     ClickhouseRepo.query!("SELECT 1")
 
-    assert_receive {:span, span(name: "SELECT default", attributes: attributes, kind: :client)}
+    assert_receive {:span, span(name: "SELECT", attributes: attributes, kind: :client)}
 
     attrs = :otel_attributes.map(attributes)
 
     assert %{
              "db.system.name": :clickhouse,
-             "db.namespace": "default",
              "server.address": "localhost"
            } = attrs
+
+    refute Map.has_key?(attrs, :"db.namespace")
 
     refute Map.has_key?(attrs, ServerAttributes.server_port())
   end

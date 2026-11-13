@@ -14,6 +14,7 @@
 ### Fixes
 
 - Queries without a source are named `{operation} {db.namespace}` instead of ending in a blank target
+- A repo configured without `:database` (allowed by `ecto_ch`) is traced without `db.namespace` instead of crashing the handler, which detached it
 
 ## 2.0.0-beta.1
 
