@@ -359,11 +359,18 @@ defmodule OpentelemetryEcto do
 
     case query_result do
       {:error, %{__exception__: true} = exception} ->
-        OpenTelemetry.Span.record_exception(s, exception, Map.get(preprocessed_meta, :stacktrace))
-        OpenTelemetry.Span.set_status(s, OpenTelemetry.status(:error, format_error(exception)))
+        message = error_message(exception)
+
+        OpenTelemetry.Span.add_event(s, :exception, %{
+          :"exception.type" => to_string(exception.__struct__),
+          :"exception.message" => message,
+          :"exception.stacktrace" => Exception.format_stacktrace(Map.get(preprocessed_meta, :stacktrace))
+        })
+
+        OpenTelemetry.Span.set_status(s, OpenTelemetry.status(:error, message))
 
       {:error, error} ->
-        OpenTelemetry.Span.set_status(s, OpenTelemetry.status(:error, format_error(error)))
+        OpenTelemetry.Span.set_status(s, OpenTelemetry.status(:error, error_message(error)))
 
       {:ok, _} ->
         :ok
@@ -379,11 +386,14 @@ defmodule OpentelemetryEcto do
   @doc false
   def default_metadata_preprocessor(meta), do: meta
 
-  defp format_error(%{__exception__: true} = exception) do
-    Exception.message(exception)
+  # A database server's error message can quote the row's values; its error code can't.
+  defp error_message(error) do
+    case {error_type(error), error} do
+      {:_OTHER, %{__exception__: true}} -> Exception.message(error)
+      {:_OTHER, reason} -> inspect(reason)
+      {code, _error} -> to_string(code)
+    end
   end
-
-  defp format_error(reason), do: inspect(reason)
 
   defp adapter(Ecto.Adapters.Postgres), do: %{system: :postgresql, default_port: 5432}
   defp adapter(Ecto.Adapters.MyXQL), do: %{system: :mysql, default_port: 3306}
