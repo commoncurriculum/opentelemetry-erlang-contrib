@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+* `client_address` option. Set it to `false` to leave `client.address` off server spans, for example to keep IP addresses out of stored telemetry. Default: `true`.
+
 ### Fixed
 
 * Set the span status to error when the client closes the socket or the connection fails before a response is sent, and for early errors. Cowboy gives the reason as an atom, so `opentelemetry:status/2` returned `undefined` and the status stayed unset.

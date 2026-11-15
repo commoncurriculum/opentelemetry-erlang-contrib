@@ -84,6 +84,7 @@ opentelemetry_cowboy:setup(#{public_endpoint_fn => {public_endpoint, fun is_publ
 
 default_opts() ->
     #{
+        client_address => true,
         client_address_headers => [<<"forwarded">>, <<"x-forwarded-for">>],
         client_headers_sort_fn => undefined,
         handler_id => otel_cowboy,
@@ -103,6 +104,7 @@ default_opts() ->
 Initializes and configures the telemetry handlers.
 
 Supported options:
+* `client_address` - Set `client.address` on the span. Set it to `false` to leave the client's address off, for example to keep IP addresses out of stored telemetry. Default: `true`
 * `client_address_headers` - Headers to use for extracting original client request address info. Default: `[<<"forwarded">>, <<"x-forwarded-for">>]`
 * `client_headers_sort_fn` - Custom client header sort fn. See `otel_http` for more info. Default: `undefined`
 * `handler_id` - Only set when running multiple instances on different endpoints. Default: `otel_cowboy`
@@ -273,7 +275,7 @@ handle_event([cowboy, request, start], _Measurements, #{req := Req} = Meta, Conf
         qs := QueryString,
         version := Version
     } = Req,
-    #{opt_in_attrs := OptedInAttrs} = Config,
+    #{opt_in_attrs := OptedInAttrs, client_address := SetClientAddress} = Config,
     #{ip := ClientIP, port := ClientPort} = extract_client_address(Req, Config),
     DefaultOptInAttrs = opt_in_attrs(),
     OptInAttrs = DefaultOptInAttrs#{
@@ -284,14 +286,18 @@ handle_event([cowboy, request, start], _Measurements, #{req := Req} = Meta, Conf
 
     Method = parse_method(ReqMethod),
 
-    Attrs1 = #{
-                ?CLIENT_ADDRESS => ClientIP,
+    Attrs0 = #{
                 ?HTTP_REQUEST_METHOD => Method,
                 ?NETWORK_PEER_ADDRESS => ip_to_binary(PeerRemoteIP),
                 ?NETWORK_PEER_PORT => PeerPort,
                 ?URL_PATH => Path,
                 ?URL_SCHEME => extract_scheme(Req, Config),
                 ?USER_AGENT_ORIGINAL => maps:get(<<"user-agent">>, ReqHeaders, <<"">>)},
+    Attrs1 =
+        case SetClientAddress of
+            true -> Attrs0#{?CLIENT_ADDRESS => ClientIP};
+            false -> Attrs0
+        end,
     Attrs2 = set_network_protocol_attrs(Attrs1, Version),
     Attrs3 = set_query_string_attr(Attrs2, QueryString),
     Attrs4 = set_server_address_attrs(Attrs3, ReqHeaders, Config),
