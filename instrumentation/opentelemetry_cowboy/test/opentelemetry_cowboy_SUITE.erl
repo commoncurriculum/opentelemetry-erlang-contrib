@@ -25,6 +25,7 @@ all() ->
         public_endpoint_true,
         with_all_optins,
         successful_request_with_custom_header_setting,
+        request_without_client_address,
         chunked_request,
         failed_request,
         client_timeout_request,
@@ -303,6 +304,20 @@ successful_request_with_custom_header_setting(_Config) ->
             ?assertMatch(ExpectedAttrs, otel_attributes:map(Attributes))
     after
         1000 -> ct:fail(successful_request)
+    end.
+
+request_without_client_address(_Config) ->
+    opentelemetry_cowboy:setup(#{client_address => false}),
+    Port = 62670,
+    Headers = [{"x-forwarded-for", "203.0.133.195"}],
+    {ok, {{_Version, 200, _ReasonPhrase}, _Headers, _Body}} =
+        httpc:request(get, {"http://localhost:8080/success", Headers}, [], [{socket_opts, [{port, Port}]}]),
+    receive
+        {span, #span{attributes=Attributes}} ->
+            ?assertNot(maps:is_key(?CLIENT_ADDRESS, otel_attributes:map(Attributes))),
+            ?assertMatch(#{?NETWORK_PEER_ADDRESS := <<"127.0.0.1">>}, otel_attributes:map(Attributes))
+    after
+        1000 -> ct:fail(request_without_client_address)
     end.
 
 chunked_request(_Config) ->
