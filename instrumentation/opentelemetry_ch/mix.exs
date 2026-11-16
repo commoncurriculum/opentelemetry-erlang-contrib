@@ -44,7 +44,7 @@ defmodule OpentelemetryCh.MixProject do
       {:ex_doc, "== 0.40.4", only: :dev, runtime: false},
       {:ch,
        github: "commoncurriculum/ch",
-       ref: "647f1118f31c8bd4d307d55a946013e53aa8b5d8",
+       ref: "eb85a69c772837242b9c57a2ff30b111d3f37004",
        only: [:dev, :test]},
       {:opentelemetry, "== 1.7.0", only: [:dev, :test]},
       {:opentelemetry_exporter, "== 1.11.0", only: [:dev, :test]},

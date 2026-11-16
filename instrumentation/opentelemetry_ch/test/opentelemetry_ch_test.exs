@@ -82,6 +82,40 @@ defmodule OpentelemetryChTest do
     assert_receive {:span, span(name: "INSERT " <> @database)}
   end
 
+  test "a streamed read is one span that ends after its last row", %{conn: conn} do
+    OpentelemetryCh.setup()
+
+    last_row_at =
+      DBConnection.run(conn, fn conn ->
+        conn
+        |> Ch.stream("SELECT number FROM numbers(5) SETTINGS max_block_size = 1")
+        |> Enum.reduce(nil, fn _result, _ -> :opentelemetry.timestamp() end)
+      end)
+
+    assert_receive {:span, span(name: "SELECT " <> @database, end_time: end_time)}
+    assert end_time > last_row_at
+    refute_receive {:span, span(name: "SELECT " <> @database)}
+  end
+
+  test "a streamed insert is one span named after its table", %{conn: conn} do
+    OpentelemetryCh.setup()
+
+    DBConnection.run(conn, fn conn ->
+      stream =
+        Ch.stream(conn, "INSERT INTO events FORMAT RowBinary", [],
+          encode: false,
+          source: "events"
+        )
+
+      [["Ada"], ["Grace"]]
+      |> Stream.map(&Ch.RowBinary.encode_row(&1, ["String"]))
+      |> Enum.into(stream)
+    end)
+
+    assert_receive {:span, span(name: "INSERT events", status: :undefined)}
+    refute_receive {:span, span(name: "INSERT events")}
+  end
+
   test "a query run in a task is a child of the span that started the task", %{conn: conn} do
     OpentelemetryCh.setup()
 
