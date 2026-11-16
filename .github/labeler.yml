@@ -173,6 +173,11 @@ opentelemetry_mongodb_driver:
       - any-glob-to-any-file:
           - instrumentation/opentelemetry_mongodb_driver/**/*
 
+opentelemetry_ch:
+  - changed-files:
+      - any-glob-to-any-file:
+          - instrumentation/opentelemetry_ch/**/*
+
 opentelemetry_commanded:
   - changed-files:
       - any-glob-to-any-file:
