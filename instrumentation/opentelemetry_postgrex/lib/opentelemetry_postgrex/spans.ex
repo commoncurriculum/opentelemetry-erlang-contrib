@@ -7,8 +7,6 @@ defmodule OpentelemetryPostgrex.Spans do
 
   use GenServer
 
-  require OpenTelemetry.Tracer
-
   alias OpenTelemetry.SemConv.ErrorAttributes
 
   @sweep_interval :timer.seconds(10)
