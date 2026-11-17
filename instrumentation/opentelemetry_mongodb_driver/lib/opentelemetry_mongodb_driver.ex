@@ -289,9 +289,11 @@ defmodule OpentelemetryMongodbDriver do
     do: command |> encodable() |> Jason.encode!() |> :otel_db_query_text.truncate()
 
   defp command_text([{operation, target} | arguments], %{db_query_text: :obfuscated}) do
-    arguments
-    |> Map.new(fn {key, value} -> {key, obfuscate(value)} end)
-    |> Map.put(operation, plain(target))
+    [
+      {operation, plain(target)}
+      | Enum.map(arguments, fn {key, value} -> {key, obfuscate(value)} end)
+    ]
+    |> Jason.OrderedObject.new()
     |> Jason.encode!()
     |> :otel_db_query_text.truncate()
   end
@@ -300,7 +302,7 @@ defmodule OpentelemetryMongodbDriver do
     do: Map.new(value, fn {key, item} -> {key, encodable(item)} end)
 
   defp encodable([{key, _} | _] = value) when is_atom(key) or is_binary(key),
-    do: Map.new(value, fn {key, item} -> {key, encodable(item)} end)
+    do: Jason.OrderedObject.new(Enum.map(value, fn {key, item} -> {key, encodable(item)} end))
 
   defp encodable(value) when is_list(value), do: Enum.map(value, &encodable/1)
   defp encodable(value), do: plain(value)
@@ -309,7 +311,7 @@ defmodule OpentelemetryMongodbDriver do
     do: Map.new(value, fn {key, item} -> {key, obfuscate(item)} end)
 
   defp obfuscate([{key, _} | _] = value) when is_atom(key) or is_binary(key),
-    do: Map.new(value, fn {key, item} -> {key, obfuscate(item)} end)
+    do: Jason.OrderedObject.new(Enum.map(value, fn {key, item} -> {key, obfuscate(item)} end))
 
   defp obfuscate([first | _]), do: [obfuscate(first)]
   defp obfuscate([]), do: []

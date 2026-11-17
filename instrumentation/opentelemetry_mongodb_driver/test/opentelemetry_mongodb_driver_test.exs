@@ -63,7 +63,7 @@ defmodule OpentelemetryMongodbDriverTest do
              "db.namespace": @database,
              "db.collection.name": "users",
              "db.operation.name": "find",
-             "db.query.text": ~s({"filter":{"name":"?"},"find":"users"})
+             "db.query.text": ~s({"find":"users","filter":{"name":"?"}})
            }
   end
 
