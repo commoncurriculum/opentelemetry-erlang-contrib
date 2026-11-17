@@ -65,6 +65,30 @@ defmodule OpentelemetryFinchTest do
     end
   end
 
+  test "redacts query values when set up with redact_query_values", %{bypass: bypass} do
+    :telemetry.detach({OpentelemetryFinch, :request_stop})
+    OpentelemetryFinch.setup(redact_query_values: true)
+    on_exit(fn -> :telemetry.detach({OpentelemetryFinch, :request_stop}) end)
+
+    Bypass.expect(bypass, fn conn -> Plug.Conn.resp(conn, 200, "") end)
+
+    {:ok, _} =
+      Finch.build(
+        :get,
+        "#{endpoint_url(bypass.port)}/users/2?email=a%40b.com&flag&array=foo&array=bar"
+      )
+      |> Finch.request(HttpFinch)
+
+    assert_receive {:span, span(name: "GET", attributes: attributes)}
+
+    assert :otel_attributes.map(attributes)[URLAttributes.url_full()] ==
+             "#{endpoint_url(bypass.port)}/users/2?email=REDACTED&flag&array=REDACTED&array=REDACTED"
+  end
+
+  test "rejects unknown setup options" do
+    assert_raise NimbleOptions.ValidationError, fn -> OpentelemetryFinch.setup(redact: true) end
+  end
+
   test "records span on requests with custom span name", %{bypass: bypass} do
     Bypass.expect(bypass, fn conn -> Plug.Conn.resp(conn, 200, "") end)
 
