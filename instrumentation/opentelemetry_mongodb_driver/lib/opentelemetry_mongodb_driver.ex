@@ -299,8 +299,12 @@ defmodule OpentelemetryMongodbDriver do
   defp command_text(command, %{db_query_text: :plain}),
     do: Jason.encode!(encodable(command, &plain/1))
 
-  defp command_text(command, %{db_query_text: :obfuscated}),
-    do: Jason.encode!(encodable(command, fn _ -> "?" end))
+  defp command_text([{operation, target} | arguments], %{db_query_text: :obfuscated}) do
+    arguments
+    |> Map.new(fn {key, value} -> {key, encodable(value, fn _ -> "?" end)} end)
+    |> Map.put(operation, plain(target))
+    |> Jason.encode!()
+  end
 
   defp encodable(value, leaf) when is_map(value) and not is_struct(value),
     do: Map.new(value, fn {key, item} -> {key, encodable(item, leaf)} end)

@@ -165,7 +165,8 @@ defmodule OpentelemetryMongodbDriverTest do
       refute Map.has_key?(:otel_attributes.map(attributes), :"db.query.text")
     end
 
-    test "replaces every value with ? when obfuscated", %{conn: conn} do
+    test "keeps the command and its collection and replaces every other value with ? when obfuscated",
+         %{conn: conn} do
       OpentelemetryMongodbDriver.setup(db_query_text: :obfuscated)
 
       Mongo.find(conn, "users", %{name: "Ada"}) |> Enum.to_list()
@@ -173,7 +174,10 @@ defmodule OpentelemetryMongodbDriverTest do
       assert_receive {:span, span(name: "find users", attributes: attributes)}
 
       assert %{"db.query.text": text} = :otel_attributes.map(attributes)
-      assert %{"find" => "?", "filter" => %{"name" => "?"}} = Jason.decode!(text)
+
+      assert %{"find" => "users", "filter" => %{"name" => "?"}, "limit" => "?"} =
+               Jason.decode!(text)
+
       refute text =~ "Ada"
     end
 
