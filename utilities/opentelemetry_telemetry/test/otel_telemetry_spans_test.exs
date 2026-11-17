@@ -24,7 +24,13 @@ defmodule OtelTelemetrySpansTest do
   test "the sweep hands the spans of callers that exited to their orphan fun, with how long they were open" do
     test = self()
     alive = make_ref()
-    :otel_telemetry_spans.put(alive, Tracer.start_span("alive"), %{test: test}, &__MODULE__.orphaned/3)
+
+    :otel_telemetry_spans.put(
+      alive,
+      Tracer.start_span("alive"),
+      %{test: test},
+      &__MODULE__.orphaned/3
+    )
 
     {caller, monitor} =
       spawn_monitor(fn ->
