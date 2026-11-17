@@ -121,27 +121,28 @@ defmodule OpentelemetryPostgrexTest do
     assert_receive {:span, span(name: "COMMIT " <> @database)}
   end
 
-  test "a stream is one span that ends after its last row", %{conn: conn} do
+  test "each round trip of a stream is its own span", %{conn: conn} do
     OpentelemetryPostgrex.setup()
 
-    last_row_at =
-      Postgrex.transaction(conn, fn conn ->
-        query = Postgrex.prepare!(conn, "", "SELECT * FROM generate_series(1, 5)")
+    Postgrex.transaction(conn, fn conn ->
+      query = Postgrex.prepare!(conn, "", "SELECT * FROM generate_series(1, 5)")
+      conn |> Postgrex.stream(query, [], max_rows: 2) |> Stream.run()
+    end)
 
-        conn
-        |> Postgrex.stream(query, [], max_rows: 2)
-        |> Enum.reduce(nil, fn _result, _ -> :opentelemetry.timestamp() end)
-      end)
+    returned_rows =
+      for {:span, span(name: "SELECT " <> @database, attributes: attributes)} <- spans(),
+          rows = :otel_attributes.map(attributes)[:"db.response.returned_rows"],
+          do: rows
 
-    assert {:ok, last_row_at} = last_row_at
-    assert_receive {:span, span(name: "SELECT " <> @database, attributes: prepare_attributes)}
-    refute Map.has_key?(:otel_attributes.map(prepare_attributes), :"db.response.returned_rows")
+    assert returned_rows == [2, 2, 1]
+  end
 
-    assert_receive {:span,
-                    span(name: "SELECT " <> @database, end_time: end_time, attributes: attributes)}
-
-    assert end_time > last_row_at
-    assert %{"db.response.returned_rows": 5} = :otel_attributes.map(attributes)
+  defp spans do
+    receive do
+      {:span, _} = span -> [span | spans()]
+    after
+      100 -> []
+    end
   end
 
   test "a query run in a task is a child of the span that started the task", %{conn: conn} do
@@ -184,46 +185,6 @@ defmodule OpentelemetryPostgrexTest do
                     )}
 
     refute Map.has_key?(:otel_attributes.map(attributes), :"db.response.status_code")
-  end
-
-  @tag :capture_log
-  test "a stream whose checkout times out is ended by the pool with the timeout error", %{
-    hostname: hostname
-  } do
-    OpentelemetryPostgrex.setup()
-    port = Application.fetch_env!(:opentelemetry_postgrex, :port)
-
-    {:ok, conn} =
-      Postgrex.start_link(
-        hostname: hostname,
-        port: port,
-        username: "postgres",
-        password: "postgres",
-        database: @database,
-        pool_size: 1
-      )
-
-    statement = "SELECT * FROM generate_series(1, 1000)"
-
-    assert_raise DBConnection.ConnectionError, fn ->
-      Postgrex.transaction(
-        conn,
-        fn conn ->
-          conn
-          |> Postgrex.stream(statement, [], max_rows: 1)
-          |> Stream.each(fn _ -> Process.sleep(50) end)
-          |> Stream.run()
-        end,
-        timeout: 300
-      )
-    end
-
-    assert_receive {:span,
-                    span(
-                      name: "SELECT " <> @database,
-                      status: {:status, :error, "DBConnection.ConnectionError"}
-                    )},
-                   1_000
   end
 
   @tag :capture_log

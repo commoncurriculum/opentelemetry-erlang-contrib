@@ -4,9 +4,9 @@ defmodule OpentelemetryPostgrex do
 
   Every query the driver reports on its `[:postgrex, :query, :start | :stop | :exception]`
   telemetry events becomes a `CLIENT` span and a `db.client.operation.duration` measurement.
-  That covers `Postgrex.query/4`, streams, `COPY`, transactions and every query Ecto makes. The
-  events fire in the process that runs the query, so the span is a child of that process's
-  current span, or, in a task with no span of its own, of its caller's.
+  That covers `Postgrex.query/4`, streams (a span for each round trip), `COPY`, transactions and
+  every query Ecto makes. The events fire in the process that runs the query, so the span is a
+  child of that process's current span, or, in a task with no span of its own, of its caller's.
 
   ## Usage
 
