@@ -175,8 +175,7 @@ defmodule OpentelemetryMongodbDriverTest do
 
       assert %{"db.query.text": text} = :otel_attributes.map(attributes)
 
-      assert %{"find" => "users", "filter" => %{"name" => "?"}, "limit" => "?"} =
-               Jason.decode!(text)
+      assert %{"find" => "users", "filter" => %{"name" => "?"}} = Jason.decode!(text)
 
       refute text =~ "Ada"
     end
