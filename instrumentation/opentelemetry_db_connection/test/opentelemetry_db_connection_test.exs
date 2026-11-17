@@ -44,25 +44,16 @@ defmodule OpentelemetryDBConnectionTest do
 
   defp recorded(metric_name, pool_name) do
     :otel_meter_server.force_flush()
-    find_datapoint(metric_name, pool_name)
-  end
+    metrics = Map.merge(Process.get(:metrics, %{}), collect_metrics(), fn _, a, b -> a ++ b end)
+    Process.put(:metrics, metrics)
 
-  defp find_datapoint(metric_name, pool_name) do
-    receive do
-      {:otel_metric, metric(name: ^metric_name, unit: :s, data: histogram(datapoints: points))} ->
-        Enum.find(
-          points,
-          &match?(
-            histogram_datapoint(attributes: %{"db.client.connection.pool.name": ^pool_name}),
-            &1
-          )
-        ) || find_datapoint(metric_name, pool_name)
-
-      {:otel_metric, _other} ->
-        find_datapoint(metric_name, pool_name)
-    after
-      1_000 -> flunk("no #{metric_name} datapoint for #{pool_name}")
-    end
+    Enum.find(
+      Map.get(metrics, metric_name, []),
+      &match?(
+        histogram_datapoint(attributes: %{"db.client.connection.pool.name": ^pool_name}),
+        &1
+      )
+    ) || flunk("no #{metric_name} datapoint for #{pool_name}")
   end
 
   test "a ClickHouse query records its pool's wait and use time, named by the pool's label" do
@@ -124,5 +115,57 @@ defmodule OpentelemetryDBConnectionTest do
              recorded(:"db.client.connection.wait_time", "otel_queue_pool")
 
     assert max >= 0.09
+  end
+
+  test "a caller dropped from the queue records its wait time with the error, and a timeout" do
+    pool =
+      postgres(label: "otel_dropped_pool", pool_size: 1, queue_target: 10, queue_interval: 10)
+
+    connected? = fn -> match?({:ok, _}, Postgrex.query(pool, "SELECT 1", [])) end
+    assert Enum.any?(1..100, fn _ -> connected?.() || (Process.sleep(20) && false) end)
+    :otel_meter_server.force_flush()
+    collect_metrics()
+    test = self()
+
+    Task.start(fn ->
+      DBConnection.run(pool, fn _conn ->
+        send(test, :holding)
+        Process.sleep(300)
+      end)
+    end)
+
+    assert_receive :holding, 2_000
+
+    assert_raise DBConnection.ConnectionError, fn ->
+      Postgrex.query!(pool, "SELECT 1", [], queue_target: 10, queue_interval: 10)
+    end
+
+    :otel_meter_server.force_flush()
+    metrics = collect_metrics()
+
+    pool_attributes = %{
+      "db.client.connection.pool.name": "otel_dropped_pool",
+      "db.system.name": :postgresql
+    }
+
+    assert Enum.any?(
+             metrics[:"db.client.connection.wait_time"],
+             &match?(
+               histogram_datapoint(attributes: %{"error.type": "DBConnection.ConnectionError"}),
+               &1
+             )
+           )
+
+    assert [datapoint] = metrics[:"db.client.connection.timeouts"]
+    assert elem(datapoint, 1) == pool_attributes
+  end
+
+  defp collect_metrics(acc \\ %{}) do
+    receive do
+      {:otel_metric, metric(name: name, data: data)} ->
+        collect_metrics(Map.update(acc, name, elem(data, 1), &(&1 ++ elem(data, 1))))
+    after
+      200 -> acc
+    end
   end
 end

@@ -249,6 +249,20 @@ defmodule OpentelemetryPostgrexTest do
                    1_000
   end
 
+  @tag :capture_log
+  test "a statement that is chardata but not iodata is still traced, and tracing goes on",
+       %{conn: conn} do
+    OpentelemetryPostgrex.setup()
+
+    assert_raise ArgumentError, fn -> Postgrex.query(conn, [~c"SELECT '", 8364, ~c"'"], []) end
+
+    assert_receive {:span,
+                    span(attributes: attributes, status: {:status, :error, "ArgumentError"})}
+
+    assert %{"db.query.text": "SELECT '€'"} = :otel_attributes.map(attributes)
+    assert :telemetry.list_handlers([:postgrex, :query]) != []
+  end
+
   test "db.query.text is left out when disabled", %{conn: conn} do
     OpentelemetryPostgrex.setup(db_query_text: false)
 
@@ -262,6 +276,41 @@ defmodule OpentelemetryPostgrexTest do
     setup do
       Process.register(self(), :otel_postgrex_metric_test)
       :ok
+    end
+
+    @tag :capture_log
+    test "is recorded for a prepared query whose caller is killed", %{conn: conn} do
+      OpentelemetryPostgrex.setup()
+      query = Postgrex.prepare!(conn, "", "SELECT pg_sleep(2)")
+      test = self()
+
+      caller =
+        spawn(fn ->
+          send(test, :querying)
+          Postgrex.execute(conn, query, [])
+        end)
+
+      assert_receive :querying
+      Process.sleep(100)
+      Process.exit(caller, :kill)
+
+      assert_receive {:span,
+                      span(name: "SELECT " <> @database, status: {:status, :error, "_OTHER"})},
+                     2_000
+
+      :sys.get_state(:otel_telemetry_spans)
+      :otel_meter_server.force_flush()
+
+      assert_receive {:otel_metric,
+                      metric(
+                        name: :"db.client.operation.duration",
+                        data: histogram(datapoints: datapoints)
+                      )}
+
+      assert Enum.any?(
+               datapoints,
+               &match?(histogram_datapoint(attributes: %{"error.type": "_OTHER"}), &1)
+             )
     end
 
     test "is recorded for each query with the span's attributes", %{conn: conn} do

@@ -26,8 +26,10 @@ defmodule OpentelemetryDBConnection do
   Histograms in seconds, recorded through `opentelemetry_api_experimental`:
 
     * `db.client.connection.wait_time` - how long a caller waited for the pool to give it a
-      connection
+      connection, including callers that never got one, which carry `error.type`
     * `db.client.connection.use_time` - how long the caller held the connection
+
+  And a counter, `db.client.connection.timeouts`, of callers dropped from the pool's queue.
 
   ## Attributes
 
@@ -39,8 +41,11 @@ defmodule OpentelemetryDBConnection do
       `Tds.Protocol` and `sqlite` for `Exqlite.Connection`; left out for any other driver
   """
 
+  require OpenTelemetryAPIExperimental.Counter, as: Counter
   require OpenTelemetryAPIExperimental.Histogram, as: Histogram
+  require Logger
 
+  alias OpenTelemetry.SemConv.ErrorAttributes
   alias OpenTelemetry.SemConv.Incubating.DBAttributes
   alias OpenTelemetry.SemConv.Incubating.Metrics.DBMetrics
 
@@ -74,30 +79,68 @@ defmodule OpentelemetryDBConnection do
       advisory_params: %{explicit_bucket_boundaries: @boundaries}
     })
 
+    Counter.create(DBMetrics.db_client_connection_timeouts(), %{
+      unit: "{timeout}",
+      description:
+        "The number of connection timeouts that have occurred trying to obtain a connection from the pool."
+    })
+
     _ = :telemetry.attach_many(__MODULE__, @events, &__MODULE__.handle_event/4, nil)
 
     :ok
   end
 
   @doc false
-  def handle_event([:db_connection, :checkout], %{wait_time: wait_time}, metadata, _config),
-    do: record(DBMetrics.db_client_connection_wait_time(), wait_time, metadata)
+  def handle_event(event, measurements, metadata, _config) do
+    handle(event, measurements, metadata)
+  rescue
+    error ->
+      Logger.error(
+        "#{inspect(__MODULE__)} failed: " <> Exception.format(:error, error, __STACKTRACE__)
+      )
+  catch
+    kind, reason ->
+      Logger.error(
+        "#{inspect(__MODULE__)} failed: " <> Exception.format(kind, reason, __STACKTRACE__)
+      )
+  end
 
-  def handle_event([:db_connection, :checkin], %{use_time: use_time}, metadata, _config),
-    do: record(DBMetrics.db_client_connection_use_time(), use_time, metadata)
+  defp handle([:db_connection, :checkout], %{wait_time: wait_time}, %{error: error} = metadata) do
+    attributes = attributes(metadata)
 
-  defp record(metric, native_time, %{label: label, connection_module: module}) do
-    attributes = %{DBAttributes.db_client_connection_pool_name() => pool_name(label || module)}
+    if match?(%DBConnection.ConnectionError{reason: :queue_timeout}, error) do
+      Counter.add(DBMetrics.db_client_connection_timeouts(), 1, attributes)
+    end
 
-    attributes =
-      case @db_system_names do
-        %{^module => system} -> Map.put(attributes, :"db.system.name", system)
-        _ -> attributes
-      end
+    record(
+      DBMetrics.db_client_connection_wait_time(),
+      wait_time,
+      Map.put(attributes, ErrorAttributes.error_type(), error_type(error))
+    )
+  end
 
+  defp handle([:db_connection, :checkout], %{wait_time: wait_time}, metadata),
+    do: record(DBMetrics.db_client_connection_wait_time(), wait_time, attributes(metadata))
+
+  defp handle([:db_connection, :checkin], %{use_time: use_time}, metadata),
+    do: record(DBMetrics.db_client_connection_use_time(), use_time, attributes(metadata))
+
+  defp record(metric, native_time, attributes) do
     seconds = System.convert_time_unit(native_time, :native, :nanosecond) / 1_000_000_000
     Histogram.record(metric, seconds, attributes)
   end
+
+  defp attributes(%{label: label, connection_module: module}) do
+    attributes = %{DBAttributes.db_client_connection_pool_name() => pool_name(label || module)}
+
+    case @db_system_names do
+      %{^module => system} -> Map.put(attributes, :"db.system.name", system)
+      _ -> attributes
+    end
+  end
+
+  defp error_type(%module{}), do: inspect(module)
+  defp error_type(_error), do: "_OTHER"
 
   defp pool_name(name) when is_binary(name), do: name
   defp pool_name(name), do: inspect(name)

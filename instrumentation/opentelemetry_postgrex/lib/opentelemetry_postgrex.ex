@@ -47,6 +47,7 @@ defmodule OpentelemetryPostgrex do
 
   require OpenTelemetryAPIExperimental.Histogram, as: Histogram
   require OpenTelemetry.Tracer
+  require Logger
 
   alias OpenTelemetry.SemConv.ErrorAttributes
   alias OpenTelemetry.SemConv.Incubating.DBAttributes
@@ -128,20 +129,45 @@ defmodule OpentelemetryPostgrex do
   end
 
   @doc false
-  def handle_event([:postgrex, :query, :start], _measurements, metadata, config) do
-    attributes = attributes(metadata)
+  def handle_event(event, measurements, metadata, config) do
+    handle(event, measurements, metadata, config)
+  rescue
+    error ->
+      Logger.error(
+        "#{inspect(__MODULE__)} failed: " <> Exception.format(:error, error, __STACKTRACE__)
+      )
+  catch
+    kind, reason ->
+      Logger.error(
+        "#{inspect(__MODULE__)} failed: " <> Exception.format(kind, reason, __STACKTRACE__)
+      )
+  end
+
+  @doc false
+  def orphaned(span, attributes, duration) do
+    finish(span, attributes, %{ErrorAttributes.error_type() => "_OTHER"}, duration)
+  end
+
+  defp handle([:postgrex, :query, :start], _measurements, metadata, config) do
+    statement = statement_text(metadata.query.statement)
+    attributes = attributes(metadata, statement)
 
     span =
       OpenTelemetry.Tracer.start_span(parent_context(), span_name(attributes), %{
         kind: :client,
         attributes:
-          maybe_put(attributes, DBAttributes.db_query_text(), query_text(metadata, config))
+          maybe_put(attributes, DBAttributes.db_query_text(), query_text(statement, config))
       })
 
-    :otel_telemetry_spans.put(metadata.telemetry_span_context, span, attributes)
+    :otel_telemetry_spans.put(
+      metadata.telemetry_span_context,
+      span,
+      attributes,
+      &__MODULE__.orphaned/3
+    )
   end
 
-  def handle_event([:postgrex, :query, :stop], %{duration: duration}, metadata, _config) do
+  defp handle([:postgrex, :query, :stop], %{duration: duration}, metadata, _config) do
     with {span, attributes} <- :otel_telemetry_spans.take(metadata.telemetry_span_context) do
       error = metadata.error
       status_code = status_code(error)
@@ -160,7 +186,7 @@ defmodule OpentelemetryPostgrex do
     end
   end
 
-  def handle_event([:postgrex, :query, :exception], %{duration: duration}, metadata, _config) do
+  defp handle([:postgrex, :query, :exception], %{duration: duration}, metadata, _config) do
     with {span, attributes} <- :otel_telemetry_spans.take(metadata.telemetry_span_context) do
       %{kind: kind, reason: reason, stacktrace: stacktrace} = metadata
       exception = Exception.normalize(kind, reason, stacktrace)
@@ -175,40 +201,58 @@ defmodule OpentelemetryPostgrex do
   end
 
   defp finish(span, attributes, error_attributes, duration) do
-    Histogram.record(
-      DBMetrics.db_client_operation_duration(),
-      System.convert_time_unit(duration, :native, :nanosecond) / 1_000_000_000,
-      attributes |> Map.merge(error_attributes) |> Map.take(@metric_attributes)
-    )
-
     if error_type = error_attributes[ErrorAttributes.error_type()] do
       OpenTelemetry.Span.set_attributes(span, error_attributes)
       OpenTelemetry.Span.set_status(span, OpenTelemetry.status(:error, error_type))
     end
 
     OpenTelemetry.Span.end_span(span)
+
+    Histogram.record(
+      DBMetrics.db_client_operation_duration(),
+      System.convert_time_unit(duration, :native, :nanosecond) / 1_000_000_000,
+      attributes |> Map.merge(error_attributes) |> Map.take(@metric_attributes)
+    )
   end
 
-  defp attributes(metadata) do
+  defp attributes(metadata, statement) do
     %{:"db.system.name" => :postgresql}
     |> maybe_put(DBAttributes.db_namespace(), metadata.database)
     |> maybe_put(DBAttributes.db_collection_name(), metadata.source)
-    |> maybe_put(DBAttributes.db_operation_name(), operation(metadata.query))
+    |> maybe_put(DBAttributes.db_operation_name(), operation(statement))
     |> maybe_put(ServerAttributes.server_address(), server_address(metadata.hostname))
     |> maybe_put(ServerAttributes.server_port(), server_port(metadata.port))
   end
 
   defp parent_context do
-    with :undefined <- OpentelemetryProcessPropagator.fetch_ctx(self()),
-         :undefined <- OpentelemetryProcessPropagator.fetch_parent_ctx(1, :"$callers") do
-      OpenTelemetry.Ctx.get_current()
+    ctx = OpenTelemetry.Ctx.get_current()
+
+    case OpenTelemetry.Tracer.current_span_ctx(ctx) do
+      :undefined ->
+        with :undefined <- OpentelemetryProcessPropagator.fetch_parent_ctx(1, :"$callers"),
+             do: ctx
+
+      _span ->
+        ctx
     end
   end
 
-  defp operation(%{statement: statement}) do
-    case Regex.run(~r/^\s*([[:alpha:]]+)/, IO.iodata_to_binary(statement),
-           capture: :all_but_first
-         ) do
+  defp statement_text(statement) do
+    IO.iodata_to_binary(statement)
+  rescue
+    ArgumentError -> chardata_text(statement)
+  end
+
+  defp chardata_text(statement) do
+    IO.chardata_to_string(statement)
+  rescue
+    _error -> nil
+  end
+
+  defp operation(nil), do: nil
+
+  defp operation(statement) do
+    case Regex.run(~r/^\s*([[:alpha:]]+)/, statement, capture: :all_but_first) do
       [keyword] -> main_operation(keyword)
       nil -> nil
     end
@@ -234,8 +278,8 @@ defmodule OpentelemetryPostgrex do
   defp server_port(@default_port), do: nil
   defp server_port(port), do: port
 
-  defp query_text(_metadata, %{db_query_text: false}), do: nil
-  defp query_text(%{query: %{statement: statement}}, _config), do: IO.iodata_to_binary(statement)
+  defp query_text(_statement, %{db_query_text: false}), do: nil
+  defp query_text(statement, _config), do: statement
 
   defp status_code(%{__struct__: Postgrex.Error, postgres: %{pg_code: code}})
        when is_binary(code),

@@ -230,16 +230,14 @@ defmodule OpentelemetryChTest do
     assert_receive :querying
     Process.sleep(100)
     Process.exit(caller, :kill)
-    refute_receive {:span, span(name: "SELECT " <> @database)}, 200
-
-    :otel_telemetry_spans.sweep()
 
     assert_receive {:span,
                     span(
                       name: "SELECT " <> @database,
-                      status: {:status, :error, "caller exited"},
+                      status: {:status, :error, "_OTHER"},
                       attributes: attributes
-                    )}
+                    )},
+                   2_000
 
     assert %{"error.type": "_OTHER"} = :otel_attributes.map(attributes)
   end

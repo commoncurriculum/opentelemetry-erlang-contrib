@@ -27,7 +27,7 @@ defmodule OpentelemetryMongodbDriverTest do
 
     :otel_simple_processor.set_exporter(:otel_exporter_pid, self())
 
-    on_exit(fn -> :telemetry.detach({OpentelemetryMongodbDriver, :execution}) end)
+    on_exit(fn -> :telemetry.detach(OpentelemetryMongodbDriver) end)
 
     :ok
   end
@@ -59,7 +59,8 @@ defmodule OpentelemetryMongodbDriverTest do
              "db.system.name": :mongodb,
              "db.namespace": @database,
              "db.collection.name": "users",
-             "db.operation.name": "find"
+             "db.operation.name": "find",
+             "server.address": "127.0.0.1"
            }
   end
 
@@ -74,12 +75,12 @@ defmodule OpentelemetryMongodbDriverTest do
     assert_receive {:span, span(name: "aggregate users", parent_span_id: ^parent_span_id)}
   end
 
-  test "a command without a collection is named after its operation alone", %{conn: conn} do
+  test "a command without a collection is named after its operation and database", %{conn: conn} do
     OpentelemetryMongodbDriver.setup()
 
     {:ok, _} = Mongo.command(conn, ping: 1)
 
-    assert_receive {:span, span(name: "ping", attributes: attributes)}
+    assert_receive {:span, span(name: "ping " <> @database, attributes: attributes)}
     refute Map.has_key?(:otel_attributes.map(attributes), :"db.collection.name")
   end
 
@@ -91,7 +92,7 @@ defmodule OpentelemetryMongodbDriverTest do
 
     assert_receive {:span,
                     span(
-                      name: "bogusCommand",
+                      name: "bogusCommand " <> @database,
                       status: {:status, :error, "59"},
                       attributes: attributes
                     )}
@@ -119,6 +120,42 @@ defmodule OpentelemetryMongodbDriverTest do
 
     assert %{"error.type": "11000", "db.response.status_code": "11000"} =
              :otel_attributes.map(attributes)
+  end
+
+  test "a command whose connection times out fails its span with the network error",
+       %{conn: conn} do
+    OpentelemetryMongodbDriver.setup()
+
+    fail_point = [
+      configureFailPoint: "failCommand",
+      mode: [times: 1],
+      data: [blockConnection: true, blockTimeMS: 500, failCommands: ["listCommands"]]
+    ]
+
+    {:ok, _} = Mongo.admin_command(conn, fail_point)
+    {:error, %Mongo.Error{}} = Mongo.command(conn, [listCommands: 1], timeout: 100)
+
+    assert_receive {:span,
+                    span(
+                      name: "listCommands",
+                      status: {:status, :error, "Mongo.Error"}
+                    )}
+  end
+
+  test "a transaction's commit is a child of the span that ran the transaction", %{conn: conn} do
+    OpentelemetryMongodbDriver.setup()
+    {:ok, _} = Mongo.insert_one(conn, "users", %{name: "Ada"})
+
+    Tracer.with_span "parent" do
+      :ok =
+        Mongo.transaction(conn, fn ->
+          {:ok, _} = Mongo.insert_one(conn, "users", %{name: "Grace"})
+          :ok
+        end)
+    end
+
+    assert_receive {:span, span(name: "parent", span_id: parent_span_id)}
+    assert_receive {:span, span(name: "commitTransaction admin", parent_span_id: ^parent_span_id)}
   end
 
   describe "db.query.text" do
