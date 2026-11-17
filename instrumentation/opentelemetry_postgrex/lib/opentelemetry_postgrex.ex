@@ -26,12 +26,13 @@ defmodule OpentelemetryPostgrex do
     * `db.system.name` - `postgresql`
     * `db.namespace` - the database
     * `db.collection.name` - the table, from the query's `:source` option, which Ecto sets
-    * `db.operation.name` - the statement's first keyword, such as `SELECT` or `BEGIN`; left out
-      for a statement that starts with `WITH`
+    * `db.operation.name` - the statement's first keyword as written, such as `SELECT` or
+      `BEGIN`; left out for a statement that starts with `WITH`
     * `db.query.text` - the statement, unless the `:db_query_text` option is `false`
     * `server.address` and `server.port` - the server; the port is left out when it is 5432,
       and a Unix socket is reported by its path
-    * `db.response.returned_rows` - the rows the server reported
+    * `db.response.returned_rows` - the rows the server returned; left out for a statement that
+      returns none, such as an `INSERT` without `RETURNING`
     * `db.response.status_code` - the SQLSTATE code, when the query failed with one
     * `error.type` - the SQLSTATE code, or the error's module when it has no code
 
@@ -148,7 +149,7 @@ defmodule OpentelemetryPostgrex do
 
       OpenTelemetry.Span.set_attributes(
         span,
-        maybe_put(%{}, :"db.response.returned_rows", metadata.num_rows)
+        maybe_put(%{}, :"db.response.returned_rows", metadata.returned_rows)
       )
 
       finish(span, attributes, error_attributes, duration)
@@ -204,13 +205,14 @@ defmodule OpentelemetryPostgrex do
     case Regex.run(~r/^\s*([[:alpha:]]+)/, IO.iodata_to_binary(statement),
            capture: :all_but_first
          ) do
-      [keyword] -> keyword |> String.upcase() |> main_operation()
+      [keyword] -> main_operation(keyword)
       nil -> nil
     end
   end
 
-  defp main_operation("WITH"), do: nil
-  defp main_operation(keyword), do: keyword
+  defp main_operation(keyword) do
+    if String.upcase(keyword) == "WITH", do: nil, else: keyword
+  end
 
   defp span_name(attributes) do
     target =
