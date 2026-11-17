@@ -55,12 +55,14 @@ defmodule OpentelemetryMongodbDriverTest do
 
     assert start_time < end_time
 
-    assert :otel_attributes.map(attributes) == %{
+    assert %{"server.address": address} = attributes = :otel_attributes.map(attributes)
+    assert address in ["127.0.0.1", "localhost"]
+
+    assert Map.delete(attributes, :"server.address") == %{
              "db.system.name": :mongodb,
              "db.namespace": @database,
              "db.collection.name": "users",
-             "db.operation.name": "find",
-             "server.address": "127.0.0.1"
+             "db.operation.name": "find"
            }
   end
 
@@ -125,19 +127,14 @@ defmodule OpentelemetryMongodbDriverTest do
   test "a command whose connection times out fails its span with the network error",
        %{conn: conn} do
     OpentelemetryMongodbDriver.setup()
+    {:ok, _} = Mongo.insert_one(conn, "users", %{name: "Ada"})
 
-    fail_point = [
-      configureFailPoint: "failCommand",
-      mode: [times: 1],
-      data: [blockConnection: true, blockTimeMS: 500, failCommands: ["listCommands"]]
-    ]
-
-    {:ok, _} = Mongo.admin_command(conn, fail_point)
-    {:error, %Mongo.Error{}} = Mongo.command(conn, [listCommands: 1], timeout: 100)
+    {:error, %Mongo.Error{}} =
+      Mongo.find_one(conn, "users", %{"$where" => "sleep(500) || true"}, timeout: 100)
 
     assert_receive {:span,
                     span(
-                      name: "listCommands",
+                      name: "find users",
                       status: {:status, :error, "Mongo.Error"}
                     )}
   end
