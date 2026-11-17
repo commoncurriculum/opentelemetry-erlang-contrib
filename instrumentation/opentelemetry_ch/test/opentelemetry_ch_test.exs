@@ -187,6 +187,63 @@ defmodule OpentelemetryChTest do
     assert [event(name: :exception)] = :otel_events.list(events)
   end
 
+  @tag :capture_log
+  test "a stream whose checkout times out is ended by the pool with the timeout error", %{
+    hostname: hostname
+  } do
+    OpentelemetryCh.setup()
+    port = Application.fetch_env!(:opentelemetry_ch, :port)
+    {:ok, conn} = Ch.start_link(hostname: hostname, port: port, database: @database, pool_size: 1)
+
+    assert_raise DBConnection.ConnectionError, fn ->
+      DBConnection.run(
+        conn,
+        fn conn ->
+          conn
+          |> Ch.stream("SELECT number FROM numbers(5000000) SETTINGS max_block_size=1000")
+          |> Stream.each(fn _ -> Process.sleep(50) end)
+          |> Stream.run()
+        end,
+        timeout: 300
+      )
+    end
+
+    assert_receive {:span,
+                    span(
+                      name: "SELECT " <> @database,
+                      status: {:status, :error, "DBConnection.ConnectionError"}
+                    )},
+                   1_000
+  end
+
+  @tag :capture_log
+  test "a span whose caller exits mid-query is ended by the sweep", %{conn: conn} do
+    OpentelemetryCh.setup()
+    test = self()
+
+    caller =
+      spawn(fn ->
+        send(test, :querying)
+        Ch.query(conn, "SELECT sleep(2)")
+      end)
+
+    assert_receive :querying
+    Process.sleep(100)
+    Process.exit(caller, :kill)
+    refute_receive {:span, span(name: "SELECT " <> @database)}, 200
+
+    OpentelemetryCh.Spans.sweep()
+
+    assert_receive {:span,
+                    span(
+                      name: "SELECT " <> @database,
+                      status: {:status, :error, "caller exited"},
+                      attributes: attributes
+                    )}
+
+    assert %{"error.type": "_OTHER"} = :otel_attributes.map(attributes)
+  end
+
   test "db.query.text is left out when disabled", %{conn: conn} do
     OpentelemetryCh.setup(db_query_text: false)
 

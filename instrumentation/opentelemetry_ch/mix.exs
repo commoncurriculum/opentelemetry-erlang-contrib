@@ -35,6 +35,7 @@ defmodule OpentelemetryCh.MixProject do
 
   def application do
     [
+      mod: {OpentelemetryCh.Application, []},
       extra_applications: []
     ]
   end
@@ -44,7 +45,7 @@ defmodule OpentelemetryCh.MixProject do
       {:ex_doc, "== 0.40.4", only: :dev, runtime: false},
       {:ch,
        github: "commoncurriculum/ch",
-       ref: "464ce5f5c448dad54331824e06b61cc2f3add258",
+       ref: "5a5161358961f58bccbc4db62cdbd2770e46ca3a",
        only: [:dev, :test]},
       {:opentelemetry, "== 1.7.0", only: [:dev, :test]},
       {:opentelemetry_exporter, "== 1.11.0", only: [:dev, :test]},

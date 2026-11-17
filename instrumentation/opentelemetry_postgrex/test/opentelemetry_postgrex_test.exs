@@ -186,6 +186,69 @@ defmodule OpentelemetryPostgrexTest do
     refute Map.has_key?(:otel_attributes.map(attributes), :"db.response.status_code")
   end
 
+  @tag :capture_log
+  test "a stream whose checkout times out is ended by the pool with the timeout error", %{
+    hostname: hostname
+  } do
+    OpentelemetryPostgrex.setup()
+    port = Application.fetch_env!(:opentelemetry_postgrex, :port)
+
+    {:ok, conn} =
+      Postgrex.start_link(
+        hostname: hostname,
+        port: port,
+        username: "postgres",
+        password: "postgres",
+        database: @database,
+        pool_size: 1
+      )
+
+    statement = "SELECT * FROM generate_series(1, 1000)"
+
+    assert_raise DBConnection.ConnectionError, fn ->
+      Postgrex.transaction(
+        conn,
+        fn conn ->
+          conn
+          |> Postgrex.stream(statement, [], max_rows: 1)
+          |> Stream.each(fn _ -> Process.sleep(50) end)
+          |> Stream.run()
+        end,
+        timeout: 300
+      )
+    end
+
+    assert_receive {:span,
+                    span(
+                      name: "SELECT " <> @database,
+                      status: {:status, :error, "DBConnection.ConnectionError"}
+                    )},
+                   1_000
+  end
+
+  @tag :capture_log
+  test "a query whose caller is killed is ended by the pool", %{conn: conn} do
+    OpentelemetryPostgrex.setup()
+    test = self()
+
+    caller =
+      spawn(fn ->
+        send(test, :querying)
+        Postgrex.query(conn, "SELECT pg_sleep(2)", [])
+      end)
+
+    assert_receive :querying
+    Process.sleep(100)
+    Process.exit(caller, :kill)
+
+    assert_receive {:span,
+                    span(
+                      name: "SELECT " <> @database,
+                      status: {:status, :error, "DBConnection.ConnectionError"}
+                    )},
+                   1_000
+  end
+
   test "db.query.text is left out when disabled", %{conn: conn} do
     OpentelemetryPostgrex.setup(db_query_text: false)
 
