@@ -226,6 +226,18 @@ defmodule OpentelemetryFinchTest do
     assert attrs[HTTPAttributes.http_request_method()] == "GET"
   end
 
+  test "records the status of a plain Req request", %{bypass: bypass} do
+    Bypass.expect_once(bypass, "GET", "/", fn conn -> Plug.Conn.resp(conn, 404, "") end)
+
+    assert %{status: 404} = Req.get!(endpoint_url(bypass.port), finch: HttpFinch, retry: false)
+
+    assert_receive {:span,
+                    span(name: "GET", kind: :client, attributes: attributes, status: status)}
+
+    assert :otel_attributes.map(attributes)[HTTPAttributes.http_response_status_code()] == 404
+    assert status == OpenTelemetry.status(:error, "")
+  end
+
   test "records span on streamed requests where the acc is a 3 elements tuple", %{
     bypass: bypass,
     test: finch_name
