@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Features
+
+* `otel_telemetry_spans` keeps spans whose start and stop events fire in different processes,
+  and ends the spans of callers that exit before their stop.
+
 ### Fixes
 
 * Do not attempt to end a span with if the ctx is undefined.
