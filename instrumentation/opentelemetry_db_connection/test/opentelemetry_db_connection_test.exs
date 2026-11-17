@@ -117,7 +117,7 @@ defmodule OpentelemetryDBConnectionTest do
     assert max >= 0.09
   end
 
-  test "a caller dropped from the queue records its wait time with the error, and a timeout" do
+  test "a caller dropped from the queue counts a timeout and records no wait time" do
     pool =
       postgres(label: "otel_dropped_pool", pool_size: 1, queue_target: 10, queue_interval: 10)
 
@@ -148,16 +148,50 @@ defmodule OpentelemetryDBConnectionTest do
       "db.system.name": :postgresql
     }
 
-    assert Enum.any?(
+    refute Enum.any?(
              metrics[:"db.client.connection.wait_time"],
              &match?(
-               histogram_datapoint(attributes: %{"error.type": "DBConnection.ConnectionError"}),
+               histogram_datapoint(attributes: %{"error.type": _}),
                &1
              )
            )
 
-    assert [datapoint] = metrics[:"db.client.connection.timeouts"]
-    assert elem(datapoint, 1) == pool_attributes
+    assert Enum.any?(metrics[:"db.client.connection.timeouts"], &(elem(&1, 1) == pool_attributes))
+  end
+
+  test "a caller whose deadline passes while it is queued counts a timeout" do
+    pool = postgres(label: "otel_deadline_pool", pool_size: 1, queue_target: 1_000)
+
+    connected? = fn -> match?({:ok, _}, Postgrex.query(pool, "SELECT 1", [])) end
+    assert Enum.any?(1..100, fn _ -> connected?.() || (Process.sleep(20) && false) end)
+    :otel_meter_server.force_flush()
+    collect_metrics()
+    test = self()
+
+    Task.start(fn ->
+      DBConnection.run(pool, fn _conn ->
+        send(test, :holding)
+        Process.sleep(200)
+      end)
+    end)
+
+    assert_receive :holding, 2_000
+
+    assert_raise DBConnection.ConnectionError, ~r/deadline reached while in queue/, fn ->
+      Postgrex.query!(pool, "SELECT 1", [], timeout: 50)
+    end
+
+    :otel_meter_server.force_flush()
+
+    timeouts = collect_metrics()[:"db.client.connection.timeouts"]
+
+    assert Enum.any?(
+             timeouts,
+             &(elem(&1, 1) == %{
+                 "db.client.connection.pool.name": "otel_deadline_pool",
+                 "db.system.name": :postgresql
+               })
+           )
   end
 
   defp collect_metrics(acc \\ %{}) do
