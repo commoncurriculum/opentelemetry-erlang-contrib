@@ -61,8 +61,18 @@ defmodule OpentelemetryChTest do
              "db.namespace": @database,
              "db.operation.name": "SELECT",
              "db.query.text": "SELECT {a:UInt8}",
+             "db.response.returned_rows": 1,
              "server.address": hostname
            }
+  end
+
+  test "an insert reports no returned rows", %{conn: conn} do
+    OpentelemetryCh.setup()
+
+    Ch.query!(conn, "INSERT INTO events FORMAT RowBinary", [["Ada"]], types: ["String"])
+
+    assert_receive {:span, span(name: "INSERT " <> @database, attributes: attributes)}
+    refute Map.has_key?(:otel_attributes.map(attributes), :"db.response.returned_rows")
   end
 
   test "a query's source names the table", %{conn: conn} do
@@ -92,8 +102,11 @@ defmodule OpentelemetryChTest do
         |> Enum.reduce(nil, fn _result, _ -> :opentelemetry.timestamp() end)
       end)
 
-    assert_receive {:span, span(name: "SELECT " <> @database, end_time: end_time)}
+    assert_receive {:span,
+                    span(name: "SELECT " <> @database, end_time: end_time, attributes: attributes)}
+
     assert end_time > last_row_at
+    assert %{"db.response.returned_rows": 5} = :otel_attributes.map(attributes)
     refute_receive {:span, span(name: "SELECT " <> @database)}
   end
 

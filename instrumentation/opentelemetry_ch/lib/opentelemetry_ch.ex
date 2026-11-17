@@ -28,6 +28,7 @@ defmodule OpentelemetryCh do
     * `db.operation.name` - the statement's command, such as `SELECT` or `INSERT`
     * `db.query.text` - the statement, unless the `:db_query_text` option is `false`
     * `server.address` and `server.port` - the server; the port is left out when it is 8123
+    * `db.response.returned_rows` - the rows a read returned, when ch reports them
     * `db.response.status_code` - the ClickHouse error code, when the query failed with one
     * `error.type` - the ClickHouse error code, or the error's module when it has no code
 
@@ -138,6 +139,7 @@ defmodule OpentelemetryCh do
         |> maybe_put(:"db.response.status_code", status_code)
         |> maybe_put(ErrorAttributes.error_type(), error_type(error, status_code))
 
+      OpenTelemetry.Span.set_attributes(span, response_attributes(metadata))
       finish(span, Map.merge(attributes, error_attributes), error_attributes, duration)
     end
   end
@@ -179,6 +181,11 @@ defmodule OpentelemetryCh do
     |> maybe_put(ServerAttributes.server_address(), metadata.hostname)
     |> maybe_put(ServerAttributes.server_port(), server_port(metadata.port))
   end
+
+  defp response_attributes(%{query: %{command: :insert}}), do: %{}
+
+  defp response_attributes(metadata),
+    do: maybe_put(%{}, :"db.response.returned_rows", Map.get(metadata, :num_rows))
 
   defp parent_context do
     with :undefined <- OpentelemetryProcessPropagator.fetch_ctx(self()),
