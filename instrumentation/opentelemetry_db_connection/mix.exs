@@ -44,7 +44,7 @@ defmodule OpentelemetryDBConnection.MixProject do
       {:ex_doc, "== 0.40.4", only: :dev, runtime: false},
       {:db_connection,
        github: "commoncurriculum/db_connection",
-       ref: "d7375cf9cba97a7222bcf8bd70dced526ca4c590",
+       ref: "0eccadd57cd46c06d1530b08fae443d2e3e263bf",
        override: true},
       {:ch,
        github: "commoncurriculum/ch",
