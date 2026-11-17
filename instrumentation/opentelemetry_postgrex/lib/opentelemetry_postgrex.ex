@@ -143,11 +143,6 @@ defmodule OpentelemetryPostgrex do
       )
   end
 
-  @doc false
-  def orphaned(span, attributes, duration) do
-    finish(span, attributes, %{ErrorAttributes.error_type() => "_OTHER"}, duration)
-  end
-
   defp handle([:postgrex, :query, :start], _measurements, metadata, config) do
     statement = statement_text(metadata.query.statement)
     attributes = attributes(metadata, statement)
@@ -159,12 +154,8 @@ defmodule OpentelemetryPostgrex do
           maybe_put(attributes, DBAttributes.db_query_text(), query_text(statement, config))
       })
 
-    :otel_telemetry_spans.put(
-      metadata.telemetry_span_context,
-      span,
-      attributes,
-      &__MODULE__.orphaned/3
-    )
+    :otel_telemetry_spans.put(metadata.telemetry_span_context, span, attributes) ||
+      OpenTelemetry.Span.end_span(span)
   end
 
   defp handle([:postgrex, :query, :stop], %{duration: duration}, metadata, _config) do

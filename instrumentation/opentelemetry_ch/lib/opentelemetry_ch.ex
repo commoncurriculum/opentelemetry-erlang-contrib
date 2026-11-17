@@ -135,11 +135,6 @@ defmodule OpentelemetryCh do
       )
   end
 
-  @doc false
-  def orphaned(span, attributes, duration) do
-    finish(span, attributes, %{ErrorAttributes.error_type() => "_OTHER"}, duration)
-  end
-
   defp handle([:ch, :query, :start], _measurements, metadata, config) do
     attributes = attributes(metadata)
 
@@ -150,12 +145,8 @@ defmodule OpentelemetryCh do
           maybe_put(attributes, DBAttributes.db_query_text(), query_text(metadata, config))
       })
 
-    :otel_telemetry_spans.put(
-      metadata.telemetry_span_context,
-      span,
-      attributes,
-      &__MODULE__.orphaned/3
-    )
+    :otel_telemetry_spans.put(metadata.telemetry_span_context, span, attributes) ||
+      OpenTelemetry.Span.end_span(span)
   end
 
   defp handle([:ch, :query, :stop], %{duration: duration}, metadata, _config) do

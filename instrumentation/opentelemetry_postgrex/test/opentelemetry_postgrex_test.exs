@@ -227,7 +227,7 @@ defmodule OpentelemetryPostgrexTest do
   end
 
   @tag :capture_log
-  test "a query whose caller is killed is ended by the pool", %{conn: conn} do
+  test "a query whose caller is killed fails and ends as the caller dies", %{conn: conn} do
     OpentelemetryPostgrex.setup()
     test = self()
 
@@ -244,9 +244,9 @@ defmodule OpentelemetryPostgrexTest do
     assert_receive {:span,
                     span(
                       name: "SELECT " <> @database,
-                      status: {:status, :error, "DBConnection.ConnectionError"}
+                      status: {:status, :error, "_OTHER"}
                     )},
-                   1_000
+                   500
   end
 
   @tag :capture_log
@@ -279,7 +279,7 @@ defmodule OpentelemetryPostgrexTest do
     end
 
     @tag :capture_log
-    test "is recorded for a prepared query whose caller is killed", %{conn: conn} do
+    test "is not recorded for a query whose caller is killed before it finishes", %{conn: conn} do
       OpentelemetryPostgrex.setup()
       query = Postgrex.prepare!(conn, "", "SELECT pg_sleep(2)")
       test = self()
@@ -296,9 +296,9 @@ defmodule OpentelemetryPostgrexTest do
 
       assert_receive {:span,
                       span(name: "SELECT " <> @database, status: {:status, :error, "_OTHER"})},
-                     2_000
+                     500
 
-      :sys.get_state(:otel_telemetry_spans)
+      Postgrex.query!(conn, "SELECT 1", [])
       :otel_meter_server.force_flush()
 
       assert_receive {:otel_metric,
@@ -307,7 +307,7 @@ defmodule OpentelemetryPostgrexTest do
                         data: histogram(datapoints: datapoints)
                       )}
 
-      assert Enum.any?(
+      refute Enum.any?(
                datapoints,
                &match?(histogram_datapoint(attributes: %{"error.type": "_OTHER"}), &1)
              )
