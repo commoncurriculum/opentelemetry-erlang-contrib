@@ -78,40 +78,37 @@ defmodule OpentelemetryPostgrexTest do
     Postgrex.query!(conn, "INSERT INTO otel_events VALUES ($1)", ["Ada"], source: "otel_events")
 
     assert_receive {:span, span(name: "INSERT otel_events", attributes: attributes)}
-    assert %{"db.collection.name": "otel_events"} = attributes = :otel_attributes.map(attributes)
-    refute Map.has_key?(attributes, :"db.response.returned_rows")
+    assert %{"db.collection.name": "otel_events"} = :otel_attributes.map(attributes)
   end
 
   test "returned rows are only the rows the server sent back", %{conn: conn} do
     OpentelemetryPostgrex.setup()
 
-    Postgrex.query!(conn, "INSERT INTO otel_events VALUES ($1) RETURNING name", ["Ada"],
-      source: "otel_events"
-    )
+    Postgrex.query!(conn, "INSERT INTO otel_events VALUES ($1)", ["Ada"])
+    assert_receive {:span, span(name: "INSERT " <> @database, attributes: attributes)}
+    refute Map.has_key?(:otel_attributes.map(attributes), :"db.response.returned_rows")
 
-    assert_receive {:span, span(name: "INSERT otel_events", attributes: attributes)}
+    Postgrex.query!(conn, "INSERT INTO otel_events VALUES ($1) RETURNING name", ["Ada"])
+    assert_receive {:span, span(name: "INSERT " <> @database, attributes: attributes)}
     assert %{"db.response.returned_rows": 1} = :otel_attributes.map(attributes)
   end
 
-  test "the operation name is the statement's first keyword as written", %{conn: conn} do
+  test "the operation name is the statement's first keyword as written, except WITH",
+       %{conn: conn} do
     OpentelemetryPostgrex.setup()
 
     Postgrex.query!(conn, "select 1", [])
     assert_receive {:span, span(name: "select " <> @database, attributes: attributes)}
     assert %{"db.operation.name": "select"} = :otel_attributes.map(attributes)
 
-    Postgrex.query!(conn, "with t as (select 1) select * from t", [], source: "t")
-    assert_receive {:span, span(name: "t", attributes: attributes)}
-    refute Map.has_key?(:otel_attributes.map(attributes), :"db.operation.name")
-  end
-
-  test "a statement that starts with WITH has no operation name", %{conn: conn} do
-    OpentelemetryPostgrex.setup()
-
-    Postgrex.query!(conn, "WITH t AS (SELECT 1) SELECT * FROM t", [], source: "t")
-
-    assert_receive {:span, span(name: "t", attributes: attributes)}
-    refute Map.has_key?(:otel_attributes.map(attributes), :"db.operation.name")
+    Enum.each(
+      ["WITH t AS (SELECT 1) SELECT * FROM t", "with t as (select 1) select * from t"],
+      fn statement ->
+        Postgrex.query!(conn, statement, [], source: "t")
+        assert_receive {:span, span(name: "t", attributes: attributes)}
+        refute Map.has_key?(:otel_attributes.map(attributes), :"db.operation.name")
+      end
+    )
   end
 
   test "a transaction's BEGIN and COMMIT are spans", %{conn: conn} do
