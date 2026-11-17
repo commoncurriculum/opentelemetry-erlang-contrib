@@ -232,7 +232,7 @@ defmodule OpentelemetryChTest do
     Process.exit(caller, :kill)
     refute_receive {:span, span(name: "SELECT " <> @database)}, 200
 
-    OpentelemetryCh.Spans.sweep()
+    :otel_telemetry_spans.sweep()
 
     assert_receive {:span,
                     span(

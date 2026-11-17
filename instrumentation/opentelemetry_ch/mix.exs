@@ -35,7 +35,6 @@ defmodule OpentelemetryCh.MixProject do
 
   def application do
     [
-      mod: {OpentelemetryCh.Application, []},
       extra_applications: []
     ]
   end
@@ -54,6 +53,10 @@ defmodule OpentelemetryCh.MixProject do
       {:opentelemetry_api, "~> 1.4"},
       {:opentelemetry_api_experimental, "~> 0.6"},
       {:opentelemetry_process_propagator, "~> 0.3"},
+      {:opentelemetry_telemetry,
+       github: "commoncurriculum/opentelemetry-erlang-contrib",
+       ref: "93dcbdbc3b267457a065038dbaa4ca2544e75bdd",
+       sparse: "utilities/opentelemetry_telemetry"},
       {:opentelemetry_semantic_conventions, "~> 1.27"},
       {:telemetry, "~> 0.4 or ~> 1.0"}
     ]

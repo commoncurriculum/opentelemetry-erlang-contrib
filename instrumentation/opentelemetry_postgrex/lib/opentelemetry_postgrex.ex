@@ -96,8 +96,8 @@ defmodule OpentelemetryPostgrex do
   def setup(opts \\ []) do
     config = Map.new(NimbleOptions.validate!(opts, @options_schema))
 
-    unless OpentelemetryPostgrex.Spans.started?() do
-      raise "the :opentelemetry_postgrex application must be started before OpentelemetryPostgrex.setup/1"
+    unless :otel_telemetry_spans.started() do
+      raise "the :opentelemetry_telemetry application must be started before OpentelemetryPostgrex.setup/1"
     end
 
     Histogram.create(DBMetrics.db_client_operation_duration(), %{
@@ -138,11 +138,11 @@ defmodule OpentelemetryPostgrex do
           maybe_put(attributes, DBAttributes.db_query_text(), query_text(metadata, config))
       })
 
-    OpentelemetryPostgrex.Spans.put(metadata.telemetry_span_context, span, attributes)
+    :otel_telemetry_spans.put(metadata.telemetry_span_context, span, attributes)
   end
 
   def handle_event([:postgrex, :query, :stop], %{duration: duration}, metadata, _config) do
-    with {span, attributes} <- OpentelemetryPostgrex.Spans.take(metadata.telemetry_span_context) do
+    with {span, attributes} <- :otel_telemetry_spans.take(metadata.telemetry_span_context) do
       error = metadata.error
       status_code = status_code(error)
 
@@ -161,7 +161,7 @@ defmodule OpentelemetryPostgrex do
   end
 
   def handle_event([:postgrex, :query, :exception], %{duration: duration}, metadata, _config) do
-    with {span, attributes} <- OpentelemetryPostgrex.Spans.take(metadata.telemetry_span_context) do
+    with {span, attributes} <- :otel_telemetry_spans.take(metadata.telemetry_span_context) do
       %{kind: kind, reason: reason, stacktrace: stacktrace} = metadata
       exception = Exception.normalize(kind, reason, stacktrace)
 
