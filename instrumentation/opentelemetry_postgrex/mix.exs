@@ -35,6 +35,7 @@ defmodule OpentelemetryPostgrex.MixProject do
 
   def application do
     [
+      mod: {OpentelemetryPostgrex.Application, []},
       extra_applications: []
     ]
   end
@@ -44,7 +45,7 @@ defmodule OpentelemetryPostgrex.MixProject do
       {:ex_doc, "== 0.40.4", only: :dev, runtime: false},
       {:postgrex,
        github: "commoncurriculum/postgrex",
-       ref: "8c4366d9ef30224e79f85f409d5e33dbf492977f",
+       ref: "531e8a9e40dbf9c660fa9a410e9248f27e333d31",
        only: [:dev, :test]},
       {:opentelemetry, "== 1.7.0", only: [:dev, :test]},
       {:opentelemetry_exporter, "== 1.11.0", only: [:dev, :test]},
