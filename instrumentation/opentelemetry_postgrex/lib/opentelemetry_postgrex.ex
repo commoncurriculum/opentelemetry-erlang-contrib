@@ -28,7 +28,7 @@ defmodule OpentelemetryPostgrex do
     * `db.collection.name` - the table, from the query's `:source` option, which Ecto sets
     * `db.operation.name` - the statement's first keyword as written, such as `SELECT` or
       `BEGIN`; left out for a statement that starts with `WITH`
-    * `db.query.text` - the statement, unless the `:db_query_text` option is `false`
+    * `db.query.text` - the statement, as the `:db_query_text` option says
     * `server.address` and `server.port` - the server; the port is left out when it is 5432,
       and a Unix socket is reported by its path
     * `db.response.returned_rows` - the rows the server returned; left out for a statement that
@@ -74,11 +74,17 @@ defmodule OpentelemetryPostgrex do
 
   @options_schema NimbleOptions.new!(
                     db_query_text: [
-                      type: :boolean,
-                      default: true,
+                      type: {:in, [:disabled, :obfuscated, :plain]},
+                      default: :obfuscated,
                       doc: """
-                      Whether to record the statement as `db.query.text`. Statements sent with
-                      query parameters, as Ecto's are, carry no values.
+                      Whether to record the statement as `db.query.text`:
+
+                        * `:disabled` - leave it out
+                        * `:obfuscated` - record it with every literal replaced by `?`; query
+                          parameters, such as the ones Ecto sends, stay as they are
+                        * `:plain` - record it as it is
+
+                      Recorded text is cut to its first 2048 bytes.
                       """
                     ]
                   )
@@ -269,8 +275,9 @@ defmodule OpentelemetryPostgrex do
   defp server_port(@default_port), do: nil
   defp server_port(port), do: port
 
-  defp query_text(_statement, %{db_query_text: false}), do: nil
-  defp query_text(statement, _config), do: statement
+  defp query_text(nil, _config), do: nil
+  defp query_text(_statement, %{db_query_text: :disabled}), do: nil
+  defp query_text(statement, %{db_query_text: mode}), do: :otel_db_query_text.sql(statement, mode)
 
   defp status_code(%{__struct__: Postgrex.Error, postgres: %{pg_code: code}})
        when is_binary(code),

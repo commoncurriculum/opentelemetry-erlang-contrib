@@ -213,7 +213,7 @@ defmodule OpentelemetryPostgrexTest do
   @tag :capture_log
   test "a statement that is chardata but not iodata is still traced, and tracing goes on",
        %{conn: conn} do
-    OpentelemetryPostgrex.setup()
+    OpentelemetryPostgrex.setup(db_query_text: :plain)
 
     assert_raise ArgumentError, fn -> Postgrex.query(conn, [~c"SELECT '", 8364, ~c"'"], []) end
 
@@ -224,8 +224,26 @@ defmodule OpentelemetryPostgrexTest do
     assert :telemetry.list_handlers([:postgrex, :query]) != []
   end
 
+  test "db.query.text has every literal replaced by ? by default", %{conn: conn} do
+    OpentelemetryPostgrex.setup()
+
+    Postgrex.query!(conn, "SELECT 'Ada', 42, $1::int", [1])
+
+    assert_receive {:span, span(attributes: attributes)}
+    assert %{"db.query.text": "SELECT ?, ?, $1::int"} = :otel_attributes.map(attributes)
+  end
+
+  test "db.query.text keeps every literal when plain", %{conn: conn} do
+    OpentelemetryPostgrex.setup(db_query_text: :plain)
+
+    Postgrex.query!(conn, "SELECT 'Ada', 42", [])
+
+    assert_receive {:span, span(attributes: attributes)}
+    assert %{"db.query.text": "SELECT 'Ada', 42"} = :otel_attributes.map(attributes)
+  end
+
   test "db.query.text is left out when disabled", %{conn: conn} do
-    OpentelemetryPostgrex.setup(db_query_text: false)
+    OpentelemetryPostgrex.setup(db_query_text: :disabled)
 
     Postgrex.query!(conn, "SELECT 1", [])
 

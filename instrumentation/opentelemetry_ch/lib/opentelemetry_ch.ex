@@ -26,7 +26,7 @@ defmodule OpentelemetryCh do
     * `db.namespace` - the database
     * `db.collection.name` - the table, from the query's `:source` option, which Ecto sets
     * `db.operation.name` - the statement's command, such as `SELECT` or `INSERT`
-    * `db.query.text` - the statement, unless the `:db_query_text` option is `false`
+    * `db.query.text` - the statement, as the `:db_query_text` option says
     * `server.address` and `server.port` - the server; the port is left out when it is 8123
     * `db.response.returned_rows` - the rows a read returned, when ch reports them
     * `db.response.status_code` - the ClickHouse error code, when the query failed with one
@@ -66,11 +66,17 @@ defmodule OpentelemetryCh do
 
   @options_schema NimbleOptions.new!(
                     db_query_text: [
-                      type: :boolean,
-                      default: true,
+                      type: {:in, [:disabled, :obfuscated, :plain]},
+                      default: :obfuscated,
                       doc: """
-                      Whether to record the statement as `db.query.text`. Statements sent with
-                      query parameters, as Ecto's are, carry no values.
+                      Whether to record the statement as `db.query.text`:
+
+                        * `:disabled` - leave it out
+                        * `:obfuscated` - record it with every literal replaced by `?`; query
+                          parameters, such as the ones Ecto sends, stay as they are
+                        * `:plain` - record it as it is
+
+                      Recorded text is cut to its first 2048 bytes.
                       """
                     ]
                   )
@@ -238,9 +244,16 @@ defmodule OpentelemetryCh do
   defp server_port(@default_port), do: nil
   defp server_port(port), do: port
 
-  defp query_text(_metadata, %{db_query_text: false}), do: nil
+  defp query_text(_metadata, %{db_query_text: :disabled}), do: nil
 
-  defp query_text(%{query: %{statement: statement}}, _config) do
+  defp query_text(%{query: %{statement: statement}}, %{db_query_text: mode}) do
+    case statement_text(statement) do
+      nil -> nil
+      text -> :otel_db_query_text.sql(text, mode)
+    end
+  end
+
+  defp statement_text(statement) do
     IO.iodata_to_binary(statement)
   rescue
     ArgumentError -> chardata_text(statement)

@@ -245,8 +245,26 @@ defmodule OpentelemetryChTest do
     assert %{"error.type": "_OTHER"} = :otel_attributes.map(attributes)
   end
 
+  test "db.query.text has every literal replaced by ? by default", %{conn: conn} do
+    OpentelemetryCh.setup()
+
+    Ch.query!(conn, "SELECT 'Ada', 42, {a:UInt8}", %{"a" => 1})
+
+    assert_receive {:span, span(attributes: attributes)}
+    assert %{"db.query.text": "SELECT ?, ?, {a:UInt8}"} = :otel_attributes.map(attributes)
+  end
+
+  test "db.query.text keeps every literal when plain", %{conn: conn} do
+    OpentelemetryCh.setup(db_query_text: :plain)
+
+    Ch.query!(conn, "SELECT 'Ada', 42")
+
+    assert_receive {:span, span(attributes: attributes)}
+    assert %{"db.query.text": "SELECT 'Ada', 42"} = :otel_attributes.map(attributes)
+  end
+
   test "db.query.text is left out when disabled", %{conn: conn} do
-    OpentelemetryCh.setup(db_query_text: false)
+    OpentelemetryCh.setup(db_query_text: :disabled)
 
     Ch.query!(conn, "SELECT 1")
 
