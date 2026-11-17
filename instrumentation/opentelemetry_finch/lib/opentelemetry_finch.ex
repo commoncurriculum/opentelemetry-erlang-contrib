@@ -124,24 +124,41 @@ defmodule OpentelemetryFinch do
 
   @type opt_in_attrs() :: [opt_in_attr()]
 
+  @setup_schema NimbleOptions.new!(
+                  redact_query_values: [
+                    type: :boolean,
+                    default: false,
+                    doc: """
+                    Replace every query string value in `url.full` with `REDACTED`, keeping the keys.
+                    Use it when query strings can carry credentials or personal data.
+                    """
+                  ]
+                )
+
   @typedoc "Setup options"
-  @type opts :: []
+  @type opts :: [unquote(NimbleOptions.option_typespec(@setup_schema))]
 
   @doc """
   Initializes and configures the telemetry handlers.
+
+  ## Options
+
+  #{NimbleOptions.docs(@setup_schema)}
   """
-  @spec setup(opts()) :: :ok
-  def setup(_opts \\ []) do
+  @spec setup(opts()) :: :ok | {:error, :already_exists}
+  def setup(opts \\ []) do
+    config = opts |> NimbleOptions.validate!(@setup_schema) |> Map.new()
+
     :telemetry.attach(
       {__MODULE__, :request_stop},
       [:finch, :request, :stop],
       &__MODULE__.handle_request_stop/4,
-      %{}
+      config
     )
   end
 
   @doc false
-  def handle_request_stop(_event, measurements, meta, _config) do
+  def handle_request_stop(_event, measurements, meta, config) do
     duration = measurements.duration
     end_time = :opentelemetry.timestamp()
     start_time = end_time - duration
@@ -152,7 +169,7 @@ defmodule OpentelemetryFinch do
     s =
       Tracer.start_span(span_name, %{
         start_time: start_time,
-        attributes: build_attrs(meta.request, meta.result, status, otel_config),
+        attributes: build_attrs(meta.request, meta.result, status, otel_config, config),
         kind: :client
       })
 
@@ -191,21 +208,21 @@ defmodule OpentelemetryFinch do
   defp extract_status({:ok, {_, %{status: status}}}) when is_integer(status), do: status
   defp extract_status(_), do: nil
 
-  defp build_attrs(request, result, status, otel_config) do
+  defp build_attrs(request, result, status, otel_config, config) do
     Map.merge(
-      build_req_attrs(request, otel_config),
+      build_req_attrs(request, otel_config, config),
       build_resp_attrs(result, status, otel_config)
     )
   end
 
-  defp build_req_attrs(request, otel_config) do
+  defp build_req_attrs(request, otel_config, config) do
     url =
       build_url(
         request.scheme,
         request.host,
         request.port,
         request.path,
-        request.query
+        query(request.query, config)
       )
 
     %{
@@ -356,6 +373,19 @@ defmodule OpentelemetryFinch do
     |> Enum.filter(fn {k, _} -> k == header_name end)
     |> Enum.map(fn {_, v} -> v end)
   end
+
+  defp query(query, %{redact_query_values: true}) when is_binary(query) and query != "" do
+    query
+    |> String.split("&")
+    |> Enum.map_join("&", fn pair ->
+      case String.split(pair, "=", parts: 2) do
+        [key, _value] -> key <> "=REDACTED"
+        [key] -> key
+      end
+    end)
+  end
+
+  defp query(query, _config), do: query
 
   defp build_url(scheme, host, port, path, query) do
     "#{scheme}://#{host}:#{port}#{path}" |> append_query(query)
