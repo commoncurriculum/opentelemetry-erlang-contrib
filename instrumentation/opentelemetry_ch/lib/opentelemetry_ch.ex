@@ -140,7 +140,7 @@ defmodule OpentelemetryCh do
         |> maybe_put(ErrorAttributes.error_type(), error_type(error, status_code))
 
       OpenTelemetry.Span.set_attributes(span, response_attributes(metadata))
-      finish(span, Map.merge(attributes, error_attributes), error_attributes, duration)
+      finish(span, attributes, error_attributes, duration)
     end
   end
 
@@ -154,7 +154,7 @@ defmodule OpentelemetryCh do
       end
 
       error_attributes = %{ErrorAttributes.error_type() => error_type(exception, nil)}
-      finish(span, Map.merge(attributes, error_attributes), error_attributes, duration)
+      finish(span, attributes, error_attributes, duration)
     end
   end
 
@@ -162,7 +162,7 @@ defmodule OpentelemetryCh do
     Histogram.record(
       DBMetrics.db_client_operation_duration(),
       System.convert_time_unit(duration, :native, :nanosecond) / 1_000_000_000,
-      Map.take(attributes, @metric_attributes)
+      attributes |> Map.merge(error_attributes) |> Map.take(@metric_attributes)
     )
 
     if error_type = error_attributes[ErrorAttributes.error_type()] do

@@ -32,8 +32,7 @@ defmodule OpentelemetryDBConnection do
   ## Attributes
 
     * `db.client.connection.pool.name` - the pool's `:label` start option (Ecto sets it to the
-      repo), or else the pool's name when the caller passes the pool by name, or else the
-      connection module
+      repo), or the connection module when the pool has no label
     * `db.system.name` - the database, from the driver's connection module: `postgresql` for
       `Postgrex.Protocol`, `clickhouse` for `Ch.Connection`, `mongodb` for
       `Mongo.MongoDBConnection`, `mysql` for `MyXQL.Connection`, `microsoft.sql_server` for
@@ -81,44 +80,25 @@ defmodule OpentelemetryDBConnection do
   end
 
   @doc false
-  def handle_event(
-        [:db_connection, :checkout],
-        %{wait_time: wait_time},
-        %{connection_module: _} = metadata,
-        _config
-      ) do
-    record(DBMetrics.db_client_connection_wait_time(), wait_time, metadata)
+  def handle_event([:db_connection, :checkout], %{wait_time: wait_time}, metadata, _config),
+    do: record(DBMetrics.db_client_connection_wait_time(), wait_time, metadata)
+
+  def handle_event([:db_connection, :checkin], %{use_time: use_time}, metadata, _config),
+    do: record(DBMetrics.db_client_connection_use_time(), use_time, metadata)
+
+  defp record(metric, native_time, %{label: label, connection_module: module}) do
+    attributes = %{DBAttributes.db_client_connection_pool_name() => pool_name(label || module)}
+
+    attributes =
+      case @db_system_names do
+        %{^module => system} -> Map.put(attributes, :"db.system.name", system)
+        _ -> attributes
+      end
+
+    seconds = System.convert_time_unit(native_time, :native, :nanosecond) / 1_000_000_000
+    Histogram.record(metric, seconds, attributes)
   end
 
-  def handle_event([:db_connection, :checkout], _measurements, _metadata, _config), do: :ok
-
-  def handle_event([:db_connection, :checkin], %{use_time: use_time}, metadata, _config) do
-    record(DBMetrics.db_client_connection_use_time(), use_time, metadata)
-  end
-
-  defp record(name, native, metadata) do
-    Histogram.record(name, seconds(native), attributes(metadata))
-  end
-
-  defp seconds(native), do: System.convert_time_unit(native, :native, :nanosecond) / 1_000_000_000
-
-  defp attributes(%{connection_module: module} = metadata) do
-    attributes = %{DBAttributes.db_client_connection_pool_name() => pool_name(metadata)}
-
-    case @db_system_names do
-      %{^module => system} -> Map.put(attributes, :"db.system.name", system)
-      _ -> attributes
-    end
-  end
-
-  defp pool_name(%{label: label}) when not is_nil(label), do: name(label)
-  defp pool_name(%{pool: pool}) when is_atom(pool), do: name(pool)
-  defp pool_name(%{connection_module: module}), do: name(module)
-
-  defp name(name) when is_binary(name), do: name
-
-  defp name(name) when is_atom(name),
-    do: name |> Atom.to_string() |> String.replace_prefix("Elixir.", "")
-
-  defp name(name), do: inspect(name)
+  defp pool_name(name) when is_binary(name), do: name
+  defp pool_name(name), do: inspect(name)
 end

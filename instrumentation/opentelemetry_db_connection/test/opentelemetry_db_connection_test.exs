@@ -66,32 +66,24 @@ defmodule OpentelemetryDBConnectionTest do
   end
 
   test "a ClickHouse query records its pool's wait and use time, named by the pool's label" do
-    pool = clickhouse(label: :otel_clickhouse_pool)
+    pool = clickhouse(label: OtelClickhousePool)
     Ch.query!(pool, "SELECT 1")
 
     assert histogram_datapoint(count: 1, attributes: attributes) =
-             recorded(:"db.client.connection.wait_time", "otel_clickhouse_pool")
+             recorded(:"db.client.connection.wait_time", "OtelClickhousePool")
 
     assert attributes == %{
-             "db.client.connection.pool.name": "otel_clickhouse_pool",
+             "db.client.connection.pool.name": "OtelClickhousePool",
              "db.system.name": :clickhouse
            }
 
     assert histogram_datapoint(count: 1, sum: sum) =
-             recorded(:"db.client.connection.use_time", "otel_clickhouse_pool")
+             recorded(:"db.client.connection.use_time", "OtelClickhousePool")
 
     assert sum > 0
   end
 
-  test "a Postgres pool with no label, used by name, is named by that name" do
-    postgres(name: :otel_postgres_pool)
-    Postgrex.query!(:otel_postgres_pool, "SELECT 1", [])
-
-    assert histogram_datapoint(attributes: %{"db.system.name": :postgresql}) =
-             recorded(:"db.client.connection.wait_time", "otel_postgres_pool")
-  end
-
-  test "a pool with no label or name is named by its driver" do
+  test "a pool with no label is named by its driver" do
     pool = postgres([])
     Postgrex.query!(pool, "SELECT 1", [])
 
