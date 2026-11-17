@@ -43,6 +43,7 @@ defmodule OpentelemetryCh do
 
   require OpenTelemetryAPIExperimental.Histogram, as: Histogram
   require OpenTelemetry.Tracer
+  require Logger
 
   alias OpenTelemetry.SemConv.ErrorAttributes
   alias OpenTelemetry.SemConv.Incubating.DBAttributes
@@ -88,8 +89,8 @@ defmodule OpentelemetryCh do
   def setup(opts \\ []) do
     config = Map.new(NimbleOptions.validate!(opts, @options_schema))
 
-    unless OpentelemetryCh.Spans.started?() do
-      raise "the :opentelemetry_ch application must be started before OpentelemetryCh.setup/1"
+    unless :otel_telemetry_spans.started() do
+      raise "the :opentelemetry_telemetry application must be started before OpentelemetryCh.setup/1"
     end
 
     Histogram.create(DBMetrics.db_client_operation_duration(), %{
@@ -120,7 +121,26 @@ defmodule OpentelemetryCh do
   end
 
   @doc false
-  def handle_event([:ch, :query, :start], _measurements, metadata, config) do
+  def handle_event(event, measurements, metadata, config) do
+    handle(event, measurements, metadata, config)
+  rescue
+    error ->
+      Logger.error(
+        "#{inspect(__MODULE__)} failed: " <> Exception.format(:error, error, __STACKTRACE__)
+      )
+  catch
+    kind, reason ->
+      Logger.error(
+        "#{inspect(__MODULE__)} failed: " <> Exception.format(kind, reason, __STACKTRACE__)
+      )
+  end
+
+  @doc false
+  def orphaned(span, attributes, duration) do
+    finish(span, attributes, %{ErrorAttributes.error_type() => "_OTHER"}, duration)
+  end
+
+  defp handle([:ch, :query, :start], _measurements, metadata, config) do
     attributes = attributes(metadata)
 
     span =
@@ -130,11 +150,16 @@ defmodule OpentelemetryCh do
           maybe_put(attributes, DBAttributes.db_query_text(), query_text(metadata, config))
       })
 
-    OpentelemetryCh.Spans.put(metadata.telemetry_span_context, span, attributes)
+    :otel_telemetry_spans.put(
+      metadata.telemetry_span_context,
+      span,
+      attributes,
+      &__MODULE__.orphaned/3
+    )
   end
 
-  def handle_event([:ch, :query, :stop], %{duration: duration}, metadata, _config) do
-    with {span, attributes} <- OpentelemetryCh.Spans.take(metadata.telemetry_span_context) do
+  defp handle([:ch, :query, :stop], %{duration: duration}, metadata, _config) do
+    with {span, attributes} <- :otel_telemetry_spans.take(metadata.telemetry_span_context) do
       error = metadata.error
       status_code = status_code(error)
 
@@ -148,8 +173,8 @@ defmodule OpentelemetryCh do
     end
   end
 
-  def handle_event([:ch, :query, :exception], %{duration: duration}, metadata, _config) do
-    with {span, attributes} <- OpentelemetryCh.Spans.take(metadata.telemetry_span_context) do
+  defp handle([:ch, :query, :exception], %{duration: duration}, metadata, _config) do
+    with {span, attributes} <- :otel_telemetry_spans.take(metadata.telemetry_span_context) do
       %{kind: kind, reason: reason, stacktrace: stacktrace} = metadata
       exception = Exception.normalize(kind, reason, stacktrace)
 
@@ -163,18 +188,18 @@ defmodule OpentelemetryCh do
   end
 
   defp finish(span, attributes, error_attributes, duration) do
-    Histogram.record(
-      DBMetrics.db_client_operation_duration(),
-      System.convert_time_unit(duration, :native, :nanosecond) / 1_000_000_000,
-      attributes |> Map.merge(error_attributes) |> Map.take(@metric_attributes)
-    )
-
     if error_type = error_attributes[ErrorAttributes.error_type()] do
       OpenTelemetry.Span.set_attributes(span, error_attributes)
       OpenTelemetry.Span.set_status(span, OpenTelemetry.status(:error, error_type))
     end
 
     OpenTelemetry.Span.end_span(span)
+
+    Histogram.record(
+      DBMetrics.db_client_operation_duration(),
+      System.convert_time_unit(duration, :native, :nanosecond) / 1_000_000_000,
+      attributes |> Map.merge(error_attributes) |> Map.take(@metric_attributes)
+    )
   end
 
   defp attributes(metadata) do
@@ -192,9 +217,15 @@ defmodule OpentelemetryCh do
     do: maybe_put(%{}, :"db.response.returned_rows", Map.get(metadata, :num_rows))
 
   defp parent_context do
-    with :undefined <- OpentelemetryProcessPropagator.fetch_ctx(self()),
-         :undefined <- OpentelemetryProcessPropagator.fetch_parent_ctx(1, :"$callers") do
-      OpenTelemetry.Ctx.get_current()
+    ctx = OpenTelemetry.Ctx.get_current()
+
+    case OpenTelemetry.Tracer.current_span_ctx(ctx) do
+      :undefined ->
+        with :undefined <- OpentelemetryProcessPropagator.fetch_parent_ctx(1, :"$callers"),
+             do: ctx
+
+      _span ->
+        ctx
     end
   end
 
@@ -217,7 +248,18 @@ defmodule OpentelemetryCh do
   defp server_port(port), do: port
 
   defp query_text(_metadata, %{db_query_text: false}), do: nil
-  defp query_text(%{query: %{statement: statement}}, _config), do: IO.iodata_to_binary(statement)
+
+  defp query_text(%{query: %{statement: statement}}, _config) do
+    IO.iodata_to_binary(statement)
+  rescue
+    ArgumentError -> chardata_text(statement)
+  end
+
+  defp chardata_text(statement) do
+    IO.chardata_to_string(statement)
+  rescue
+    _error -> nil
+  end
 
   defp status_code(%{__struct__: Ch.Error, code: code}) when is_integer(code),
     do: Integer.to_string(code)

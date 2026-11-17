@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+* Open spans are kept in `opentelemetry_telemetry`'s shared span store.
+
 * Spans and `db.client.operation.duration` for every query Postgrex reports on its
   `[:postgrex, :query, ...]` telemetry events, Ecto's included.
 * A stream or a `COPY ... FROM STDIN` is one span, from open to finish.
