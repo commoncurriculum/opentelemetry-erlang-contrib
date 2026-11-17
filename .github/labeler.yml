@@ -178,6 +178,11 @@ opentelemetry_ch:
       - any-glob-to-any-file:
           - instrumentation/opentelemetry_ch/**/*
 
+opentelemetry_db_connection:
+  - changed-files:
+      - any-glob-to-any-file:
+          - instrumentation/opentelemetry_db_connection/**/*
+
 opentelemetry_commanded:
   - changed-files:
       - any-glob-to-any-file:

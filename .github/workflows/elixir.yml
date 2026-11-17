@@ -965,6 +965,67 @@ jobs:
       - name: Test
         run: mix test
 
+  opentelemetry-db-connection:
+    needs: [test-matrix]
+    if: (contains(github.event.pull_request.labels.*.name, 'elixir') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_db_connection'))
+    env:
+      app: "opentelemetry_db_connection"
+    defaults:
+      run:
+        working-directory: instrumentation/${{ env.app }}
+    runs-on: ubuntu-26.04
+    name: OpenTelemetry DBConnection test on Elixir ${{ matrix.elixir_version }} (OTP ${{ matrix.otp_version }})
+    strategy:
+      fail-fast: false
+      matrix:
+        otp_version: ${{ fromJson(needs.test-matrix.outputs.matrix).otp_version }}
+        elixir_version: ${{ fromJson(needs.test-matrix.outputs.matrix).elixir_version }}
+        rebar3_version: ${{ fromJson(needs.test-matrix.outputs.matrix).rebar3_version }}
+        include: ${{ fromJson(needs.test-matrix.outputs.matrix).include }}
+        exclude: ${{ fromJson(needs.test-matrix.outputs.matrix).exclude }}
+    services:
+      postgres:
+        image: postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+        ports:
+          - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8@sha256:0152dd511befe6a2c2ef53e930726179669b08116da78500b37c51c96ff5ee77
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: 1
+        ports:
+          - 8123:8123
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          version-type: strict
+          otp-version: ${{ matrix.otp_version }}
+          elixir-version: ${{ matrix.elixir_version }}
+          rebar3-version: ${{ matrix.rebar3_version }}
+      - name: Cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/deps
+            ~/_build
+          key: ${{ runner.os }}-build-${{ matrix.otp_version }}-${{ matrix.elixir_version }}-v3-${{ hashFiles('**/mix.lock') }}
+      - name: Fetch deps
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: mix deps.get
+      - name: Compile project
+        run: mix compile --warnings-as-errors
+      - name: Check formatting
+        run: mix format --check-formatted
+        if: matrix.check_formatted
+      - name: Test
+        run: mix test
+
   opentelemetry-commanded:
     needs: [test-matrix]
     if: (contains(github.event.pull_request.labels.*.name, 'elixir') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_commanded'))
