@@ -30,7 +30,7 @@ defmodule OpentelemetryMongodbDriver do
     * `server.address` and `server.port` - the server; the port is left out when it is 27017
     * `db.response.status_code` - the server's error code, when the command failed
     * `error.type` - the error code, or the error's module when it has no code
-    * `db.query.text` - the command, only when the `:db_query_text` option asks for it
+    * `db.query.text` - the command, as the `:db_query_text` option says
 
   Spans are named `{db.operation.name} {target}`, where the target is the collection, or the
   database when the command names no collection.
@@ -70,17 +70,17 @@ defmodule OpentelemetryMongodbDriver do
 
   @options_schema NimbleOptions.new!(
                     db_query_text: [
-                      type: {:or, [{:in, [:disabled, :plain, :obfuscated]}, {:fun, 1}]},
-                      default: :disabled,
+                      type: {:in, [:disabled, :obfuscated, :plain]},
+                      default: :obfuscated,
                       doc: """
                       Whether to record the command as `db.query.text`:
 
                         * `:disabled` - leave it out
-                        * `:obfuscated` - record it with every value replaced by `?`
+                        * `:obfuscated` - record it with the command and its collection, every
+                          other value replaced by `?` and every list cut to its first item
                         * `:plain` - record it as it is, values included
 
-                      A function can be given instead: it takes the command as a keyword list
-                      and returns the string to record, or `nil` to leave it out.
+                      Recorded text is cut to its first 2048 bytes.
                       """
                     ]
                   )
@@ -145,11 +145,6 @@ defmodule OpentelemetryMongodbDriver do
       )
   end
 
-  @doc false
-  def orphaned(span, attributes, duration) do
-    finish(span, attributes, %{ErrorAttributes.error_type() => "_OTHER"}, duration)
-  end
-
   defp handle([:mongodb_driver, :command, :start], _measurements, metadata, config) do
     attributes =
       %{
@@ -166,12 +161,8 @@ defmodule OpentelemetryMongodbDriver do
           maybe_put(attributes, DBAttributes.db_query_text(), query_text(metadata, config))
       })
 
-    :otel_telemetry_spans.put(
-      metadata.telemetry_span_context,
-      span,
-      attributes,
-      &__MODULE__.orphaned/3
-    )
+    :otel_telemetry_spans.put(metadata.telemetry_span_context, span, attributes) ||
+      OpenTelemetry.Span.end_span(span)
   end
 
   defp handle([:mongodb_driver, :command, :stop], %{duration: duration}, metadata, _config) do
@@ -294,22 +285,37 @@ defmodule OpentelemetryMongodbDriver do
     _error -> nil
   end
 
-  defp command_text(command, %{db_query_text: fun}) when is_function(fun, 1), do: fun.(command)
-
   defp command_text(command, %{db_query_text: :plain}),
-    do: Jason.encode!(encodable(command, &plain/1))
+    do: command |> encodable() |> Jason.encode!() |> :otel_db_query_text.truncate()
 
-  defp command_text(command, %{db_query_text: :obfuscated}),
-    do: Jason.encode!(encodable(command, fn _ -> "?" end))
+  defp command_text([{operation, target} | arguments], %{db_query_text: :obfuscated}) do
+    [
+      {operation, plain(target)}
+      | Enum.map(arguments, fn {key, value} -> {key, obfuscate(value)} end)
+    ]
+    |> Jason.OrderedObject.new()
+    |> Jason.encode!()
+    |> :otel_db_query_text.truncate()
+  end
 
-  defp encodable(value, leaf) when is_map(value) and not is_struct(value),
-    do: Map.new(value, fn {key, item} -> {key, encodable(item, leaf)} end)
+  defp encodable(value) when is_map(value) and not is_struct(value),
+    do: Map.new(value, fn {key, item} -> {key, encodable(item)} end)
 
-  defp encodable([{key, _} | _] = value, leaf) when is_atom(key) or is_binary(key),
-    do: Map.new(value, fn {key, item} -> {key, encodable(item, leaf)} end)
+  defp encodable([{key, _} | _] = value) when is_atom(key) or is_binary(key),
+    do: Jason.OrderedObject.new(Enum.map(value, fn {key, item} -> {key, encodable(item)} end))
 
-  defp encodable(value, leaf) when is_list(value), do: Enum.map(value, &encodable(&1, leaf))
-  defp encodable(value, leaf), do: leaf.(value)
+  defp encodable(value) when is_list(value), do: Enum.map(value, &encodable/1)
+  defp encodable(value), do: plain(value)
+
+  defp obfuscate(value) when is_map(value) and not is_struct(value),
+    do: Map.new(value, fn {key, item} -> {key, obfuscate(item)} end)
+
+  defp obfuscate([{key, _} | _] = value) when is_atom(key) or is_binary(key),
+    do: Jason.OrderedObject.new(Enum.map(value, fn {key, item} -> {key, obfuscate(item)} end))
+
+  defp obfuscate([first | _]), do: [obfuscate(first)]
+  defp obfuscate([]), do: []
+  defp obfuscate(_value), do: "?"
 
   defp plain(value) when is_struct(value) or is_tuple(value) do
     if String.Chars.impl_for(value), do: to_string(value), else: inspect(value)

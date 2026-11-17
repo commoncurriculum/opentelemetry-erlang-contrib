@@ -62,7 +62,8 @@ defmodule OpentelemetryMongodbDriverTest do
              "db.system.name": :mongodb,
              "db.namespace": @database,
              "db.collection.name": "users",
-             "db.operation.name": "find"
+             "db.operation.name": "find",
+             "db.query.text": ~s({"find":"users","filter":{"name":"?"}})
            }
   end
 
@@ -156,8 +157,8 @@ defmodule OpentelemetryMongodbDriverTest do
   end
 
   describe "db.query.text" do
-    test "is left out by default", %{conn: conn} do
-      OpentelemetryMongodbDriver.setup()
+    test "is left out when disabled", %{conn: conn} do
+      OpentelemetryMongodbDriver.setup(db_query_text: :disabled)
 
       Mongo.find(conn, "users", %{name: "Ada"}) |> Enum.to_list()
 
@@ -165,15 +166,18 @@ defmodule OpentelemetryMongodbDriverTest do
       refute Map.has_key?(:otel_attributes.map(attributes), :"db.query.text")
     end
 
-    test "replaces every value with ? when obfuscated", %{conn: conn} do
-      OpentelemetryMongodbDriver.setup(db_query_text: :obfuscated)
+    test "keeps the command and its collection and replaces every other value with ? by default",
+         %{conn: conn} do
+      OpentelemetryMongodbDriver.setup()
 
       Mongo.find(conn, "users", %{name: "Ada"}) |> Enum.to_list()
 
       assert_receive {:span, span(name: "find users", attributes: attributes)}
 
       assert %{"db.query.text": text} = :otel_attributes.map(attributes)
-      assert %{"find" => "?", "filter" => %{"name" => "?"}} = Jason.decode!(text)
+
+      assert %{"find" => "users", "filter" => %{"name" => "?"}} = Jason.decode!(text)
+
       refute text =~ "Ada"
     end
 
@@ -210,15 +214,28 @@ defmodule OpentelemetryMongodbDriverTest do
                Jason.decode!(text)
     end
 
-    test "is what a given function returns", %{conn: conn} do
-      OpentelemetryMongodbDriver.setup(
-        db_query_text: fn [{command, collection} | _] -> "#{command} #{collection}" end
-      )
+    test "keeps only the first item of each list when obfuscated", %{conn: conn} do
+      OpentelemetryMongodbDriver.setup(db_query_text: :obfuscated)
 
-      Mongo.find(conn, "users", %{name: "Ada"}) |> Enum.to_list()
+      {:ok, _} =
+        Mongo.insert_many(conn, "users", [%{name: "Ada", tags: ["a", "b"]}, %{name: "Grace"}])
+
+      assert_receive {:span, span(name: "insert users", attributes: attributes)}
+      assert %{"db.query.text": text} = :otel_attributes.map(attributes)
+
+      assert %{"insert" => "users", "documents" => [%{"name" => "?", "tags" => ["?"]}]} =
+               Jason.decode!(text)
+    end
+
+    test "is cut to its first 2048 bytes", %{conn: conn} do
+      OpentelemetryMongodbDriver.setup(db_query_text: :plain)
+
+      Mongo.find(conn, "users", %{name: String.duplicate("é", 2_000)}) |> Enum.to_list()
 
       assert_receive {:span, span(name: "find users", attributes: attributes)}
-      assert %{"db.query.text": "find users"} = :otel_attributes.map(attributes)
+      assert %{"db.query.text": text} = :otel_attributes.map(attributes)
+      assert byte_size(text) in 2047..2048
+      assert String.valid?(text)
     end
   end
 

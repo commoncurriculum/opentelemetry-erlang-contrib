@@ -26,10 +26,11 @@ defmodule OpentelemetryDBConnection do
   Histograms in seconds, recorded through `opentelemetry_api_experimental`:
 
     * `db.client.connection.wait_time` - how long a caller waited for the pool to give it a
-      connection, including callers that never got one, which carry `error.type`
+      connection, for callers that got one
     * `db.client.connection.use_time` - how long the caller held the connection
 
-  And a counter, `db.client.connection.timeouts`, of callers dropped from the pool's queue.
+  And a counter, `db.client.connection.timeouts`, of callers that timed out waiting in the
+  pool's queue.
 
   ## Attributes
 
@@ -45,7 +46,6 @@ defmodule OpentelemetryDBConnection do
   require OpenTelemetryAPIExperimental.Histogram, as: Histogram
   require Logger
 
-  alias OpenTelemetry.SemConv.ErrorAttributes
   alias OpenTelemetry.SemConv.Incubating.DBAttributes
   alias OpenTelemetry.SemConv.Incubating.Metrics.DBMetrics
 
@@ -105,18 +105,10 @@ defmodule OpentelemetryDBConnection do
       )
   end
 
-  defp handle([:db_connection, :checkout], %{wait_time: wait_time}, %{error: error} = metadata) do
-    attributes = attributes(metadata)
-
+  defp handle([:db_connection, :checkout], _measurements, %{error: error} = metadata) do
     if match?(%DBConnection.ConnectionError{reason: :queue_timeout}, error) do
-      Counter.add(DBMetrics.db_client_connection_timeouts(), 1, attributes)
+      Counter.add(DBMetrics.db_client_connection_timeouts(), 1, attributes(metadata))
     end
-
-    record(
-      DBMetrics.db_client_connection_wait_time(),
-      wait_time,
-      Map.put(attributes, ErrorAttributes.error_type(), error_type(error))
-    )
   end
 
   defp handle([:db_connection, :checkout], %{wait_time: wait_time}, metadata),
@@ -138,9 +130,6 @@ defmodule OpentelemetryDBConnection do
       _ -> attributes
     end
   end
-
-  defp error_type(%module{}), do: inspect(module)
-  defp error_type(_error), do: "_OTHER"
 
   defp pool_name(name) when is_binary(name), do: name
   defp pool_name(name), do: inspect(name)

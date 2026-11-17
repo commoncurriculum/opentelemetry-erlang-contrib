@@ -121,27 +121,28 @@ defmodule OpentelemetryPostgrexTest do
     assert_receive {:span, span(name: "COMMIT " <> @database)}
   end
 
-  test "a stream is one span that ends after its last row", %{conn: conn} do
+  test "each round trip of a stream is its own span", %{conn: conn} do
     OpentelemetryPostgrex.setup()
 
-    last_row_at =
-      Postgrex.transaction(conn, fn conn ->
-        query = Postgrex.prepare!(conn, "", "SELECT * FROM generate_series(1, 5)")
+    Postgrex.transaction(conn, fn conn ->
+      query = Postgrex.prepare!(conn, "", "SELECT * FROM generate_series(1, 5)")
+      conn |> Postgrex.stream(query, [], max_rows: 2) |> Stream.run()
+    end)
 
-        conn
-        |> Postgrex.stream(query, [], max_rows: 2)
-        |> Enum.reduce(nil, fn _result, _ -> :opentelemetry.timestamp() end)
-      end)
+    returned_rows =
+      for {:span, span(name: "SELECT " <> @database, attributes: attributes)} <- spans(),
+          rows = :otel_attributes.map(attributes)[:"db.response.returned_rows"],
+          do: rows
 
-    assert {:ok, last_row_at} = last_row_at
-    assert_receive {:span, span(name: "SELECT " <> @database, attributes: prepare_attributes)}
-    refute Map.has_key?(:otel_attributes.map(prepare_attributes), :"db.response.returned_rows")
+    assert returned_rows == [2, 2, 1]
+  end
 
-    assert_receive {:span,
-                    span(name: "SELECT " <> @database, end_time: end_time, attributes: attributes)}
-
-    assert end_time > last_row_at
-    assert %{"db.response.returned_rows": 5} = :otel_attributes.map(attributes)
+  defp spans do
+    receive do
+      {:span, _} = span -> [span | spans()]
+    after
+      100 -> []
+    end
   end
 
   test "a query run in a task is a child of the span that started the task", %{conn: conn} do
@@ -187,47 +188,7 @@ defmodule OpentelemetryPostgrexTest do
   end
 
   @tag :capture_log
-  test "a stream whose checkout times out is ended by the pool with the timeout error", %{
-    hostname: hostname
-  } do
-    OpentelemetryPostgrex.setup()
-    port = Application.fetch_env!(:opentelemetry_postgrex, :port)
-
-    {:ok, conn} =
-      Postgrex.start_link(
-        hostname: hostname,
-        port: port,
-        username: "postgres",
-        password: "postgres",
-        database: @database,
-        pool_size: 1
-      )
-
-    statement = "SELECT * FROM generate_series(1, 1000)"
-
-    assert_raise DBConnection.ConnectionError, fn ->
-      Postgrex.transaction(
-        conn,
-        fn conn ->
-          conn
-          |> Postgrex.stream(statement, [], max_rows: 1)
-          |> Stream.each(fn _ -> Process.sleep(50) end)
-          |> Stream.run()
-        end,
-        timeout: 300
-      )
-    end
-
-    assert_receive {:span,
-                    span(
-                      name: "SELECT " <> @database,
-                      status: {:status, :error, "DBConnection.ConnectionError"}
-                    )},
-                   1_000
-  end
-
-  @tag :capture_log
-  test "a query whose caller is killed is ended by the pool", %{conn: conn} do
+  test "a query whose caller is killed fails and ends as the caller dies", %{conn: conn} do
     OpentelemetryPostgrex.setup()
     test = self()
 
@@ -244,15 +205,15 @@ defmodule OpentelemetryPostgrexTest do
     assert_receive {:span,
                     span(
                       name: "SELECT " <> @database,
-                      status: {:status, :error, "DBConnection.ConnectionError"}
+                      status: {:status, :error, "_OTHER"}
                     )},
-                   1_000
+                   500
   end
 
   @tag :capture_log
   test "a statement that is chardata but not iodata is still traced, and tracing goes on",
        %{conn: conn} do
-    OpentelemetryPostgrex.setup()
+    OpentelemetryPostgrex.setup(db_query_text: :plain)
 
     assert_raise ArgumentError, fn -> Postgrex.query(conn, [~c"SELECT '", 8364, ~c"'"], []) end
 
@@ -263,8 +224,26 @@ defmodule OpentelemetryPostgrexTest do
     assert :telemetry.list_handlers([:postgrex, :query]) != []
   end
 
+  test "db.query.text has every literal replaced by ? by default", %{conn: conn} do
+    OpentelemetryPostgrex.setup()
+
+    Postgrex.query!(conn, "SELECT 'Ada', 42, $1::int", [1])
+
+    assert_receive {:span, span(attributes: attributes)}
+    assert %{"db.query.text": "SELECT ?, ?, $1::int"} = :otel_attributes.map(attributes)
+  end
+
+  test "db.query.text keeps every literal when plain", %{conn: conn} do
+    OpentelemetryPostgrex.setup(db_query_text: :plain)
+
+    Postgrex.query!(conn, "SELECT 'Ada', 42", [])
+
+    assert_receive {:span, span(attributes: attributes)}
+    assert %{"db.query.text": "SELECT 'Ada', 42"} = :otel_attributes.map(attributes)
+  end
+
   test "db.query.text is left out when disabled", %{conn: conn} do
-    OpentelemetryPostgrex.setup(db_query_text: false)
+    OpentelemetryPostgrex.setup(db_query_text: :disabled)
 
     Postgrex.query!(conn, "SELECT 1", [])
 
@@ -279,7 +258,7 @@ defmodule OpentelemetryPostgrexTest do
     end
 
     @tag :capture_log
-    test "is recorded for a prepared query whose caller is killed", %{conn: conn} do
+    test "is not recorded for a query whose caller is killed before it finishes", %{conn: conn} do
       OpentelemetryPostgrex.setup()
       query = Postgrex.prepare!(conn, "", "SELECT pg_sleep(2)")
       test = self()
@@ -296,9 +275,9 @@ defmodule OpentelemetryPostgrexTest do
 
       assert_receive {:span,
                       span(name: "SELECT " <> @database, status: {:status, :error, "_OTHER"})},
-                     2_000
+                     500
 
-      :sys.get_state(:otel_telemetry_spans)
+      Postgrex.query!(conn, "SELECT 1", [])
       :otel_meter_server.force_flush()
 
       assert_receive {:otel_metric,
@@ -307,7 +286,7 @@ defmodule OpentelemetryPostgrexTest do
                         data: histogram(datapoints: datapoints)
                       )}
 
-      assert Enum.any?(
+      refute Enum.any?(
                datapoints,
                &match?(histogram_datapoint(attributes: %{"error.type": "_OTHER"}), &1)
              )

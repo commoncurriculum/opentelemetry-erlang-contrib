@@ -44,7 +44,7 @@ defmodule OpentelemetryPostgrex.MixProject do
       {:ex_doc, "== 0.40.4", only: :dev, runtime: false},
       {:postgrex,
        github: "commoncurriculum/postgrex",
-       ref: "7f82e20d03ff7e451bcd5dfe1b1b1030392e5142",
+       ref: "cc53ce3aeb863ed6d4f8d5a7eb816755c3a1974b",
        only: [:dev, :test]},
       {:opentelemetry, "== 1.7.0", only: [:dev, :test]},
       {:opentelemetry_exporter, "== 1.11.0", only: [:dev, :test]},
@@ -55,7 +55,7 @@ defmodule OpentelemetryPostgrex.MixProject do
       {:opentelemetry_process_propagator, "~> 0.3"},
       {:opentelemetry_telemetry,
        github: "commoncurriculum/opentelemetry-erlang-contrib",
-       ref: "351769de39e7f039676f60362c40e87c8d36e520",
+       ref: "00647fbbe443340abda4b5776800c47c542f30ea",
        sparse: "utilities/opentelemetry_telemetry"},
       {:opentelemetry_semantic_conventions, "~> 1.27"},
       {:telemetry, "~> 0.4 or ~> 1.0"}
