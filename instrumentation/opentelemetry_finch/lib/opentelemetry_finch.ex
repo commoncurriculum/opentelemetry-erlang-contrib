@@ -206,6 +206,7 @@ defmodule OpentelemetryFinch do
   defp extract_status({:ok, %{status: status}}) when is_integer(status), do: status
   defp extract_status({:ok, {status, _, _}}) when is_integer(status), do: status
   defp extract_status({:ok, {_, %{status: status}}}) when is_integer(status), do: status
+  defp extract_status({:ok, {_, {status, _, _, _}}}) when is_integer(status), do: status
   defp extract_status(_), do: nil
 
   defp build_attrs(request, result, status, otel_config, config) do
