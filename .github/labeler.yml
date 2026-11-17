@@ -192,3 +192,8 @@ otel_http:
   - changed-files:
       - any-glob-to-any-file:
           - utilities/otel_http/**/*
+
+opentelemetry_postgrex:
+  - changed-files:
+      - any-glob-to-any-file:
+          - instrumentation/opentelemetry_postgrex/**/*
