@@ -77,6 +77,15 @@ defmodule OpentelemetryPhoenix do
   `url.scheme`, `http.response.status_code`, `http.route` (when the router matched),
   `network.protocol.version`, and `error.type` (the status code, for 5xx responses).
 
+  It also creates three channel metrics:
+
+    * `phoenix.channel.count` (`{channel}`) - channels joined and still running, by
+      `phoenix.socket` and `phoenix.channel`.
+    * `phoenix.socket.connection.count` (`{connection}`) - socket connections with at least
+      one joined channel, by `phoenix.socket`.
+    * `phoenix.channel.handle_in.duration` (seconds) - one measurement per `handle_in/3`, by
+      `phoenix.socket`, `phoenix.channel` and `phoenix.channel.event`.
+
   Recording is a no-op unless the `opentelemetry_experimental` SDK is started before `setup/1`.
 
   """
@@ -148,6 +157,7 @@ defmodule OpentelemetryPhoenix do
     attach_endpoint_start_handler(opts)
     attach_router_start_handler(opts)
     attach_request_duration_handlers(opts)
+    OpentelemetryPhoenix.ChannelMetrics.setup()
 
     if opts[:liveview] do
       attach_liveview_handlers(opts)

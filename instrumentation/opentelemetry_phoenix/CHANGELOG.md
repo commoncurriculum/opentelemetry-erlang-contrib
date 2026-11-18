@@ -27,6 +27,12 @@
   `network.protocol.version`, and `error.type` for 5xx. Adds a dependency on
   `opentelemetry_api_experimental`; recording is a no-op unless the
   `opentelemetry_experimental` SDK is running.
+* Records channel metrics: `phoenix.channel.count` and `phoenix.socket.connection.count`
+  (observable up-down counters of joined channels and the socket connections carrying
+  them, by `phoenix.socket` and `phoenix.channel`), and the
+  `phoenix.channel.handle_in.duration` histogram (seconds, by `phoenix.socket`,
+  `phoenix.channel` and `phoenix.channel.event`). The library now has an application,
+  which supervises the `Registry` that tracks joined channels.
 
 ## 2.0.0
 
