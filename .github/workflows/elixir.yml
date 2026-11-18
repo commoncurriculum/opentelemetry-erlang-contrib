@@ -885,7 +885,7 @@ jobs:
       - name: Start MongoDB as a single-node replica set
         working-directory: .
         run: |
-          docker run -d --name mongodb -p 27017:27017 mongo@sha256:d97fea17ccb8d004cd137be8dab54d70d0df11be69c9f422aefe4484c8414ab7 --replSet rs0 --bind_ip_all
+          docker run -d --name mongodb -p 27017:27017 mongo@sha256:d97fea17ccb8d004cd137be8dab54d70d0df11be69c9f422aefe4484c8414ab7 --replSet rs0 --bind_ip_all --setParameter enableTestCommands=1
           timeout 120 bash -c "until docker exec mongodb mongosh --quiet --eval 'db.adminCommand({ping: 1}).ok' >/dev/null 2>&1; do sleep 1; done"
           docker exec mongodb mongosh --quiet --eval 'rs.initiate({_id: "rs0", members: [{_id: 0, host: "localhost:27017"}]})'
           timeout 120 bash -c "until docker exec mongodb mongosh --quiet --eval 'db.hello().isWritablePrimary' | grep -q true; do sleep 1; done"
