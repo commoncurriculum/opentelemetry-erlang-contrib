@@ -7,7 +7,9 @@ defmodule OpentelemetryMongodbDriver do
   measurement. An operation covers its retries and the server selection of each, so a retried
   write is one span, and a command that finds no server is a failed one. That covers network
   errors and timeouts as well as server errors. The span is a child of the current span of the
-  process that ran the operation, or, in a task with no span of its own, of its caller's.
+  process that ran the operation, or, in a task with no span of its own, of its caller's. A
+  transaction's commit and abort, which the driver runs in the session process, are children of
+  the current span of the process that committed or aborted.
   Requires the `:opentelemetry_telemetry` application, whose span store ends the span of a caller
   that exits mid-operation.
 
@@ -102,7 +104,8 @@ defmodule OpentelemetryMongodbDriver do
       __MODULE__,
       metadata.telemetry_span_context,
       attributes(metadata),
-      maybe_put(%{}, DBAttributes.db_query_text(), query_text(metadata, config))
+      maybe_put(%{}, DBAttributes.db_query_text(), query_text(metadata, config)),
+      metadata.caller
     )
   end
 

@@ -1,6 +1,6 @@
 -module(otel_db_client).
 
--export([attach/3, handle_event/4, operation_name/1, span_name/1, start/4, stop/3]).
+-export([attach/3, handle_event/4, operation_name/1, span_name/1, start/4, start/5, stop/3]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -36,7 +36,13 @@ handle_event(Event, Measurements, Metadata, {Module, Config}) ->
 %% Attributes go on the span and on its duration measurement; SpanAttributes only on the span.
 -spec start(module(), reference(), map(), map()) -> ok.
 start(Module, Key, Attributes, SpanAttributes) ->
-    Span = otel_tracer:start_span(parent_context(), tracer(Module), span_name(Attributes), #{
+    start(Module, Key, Attributes, SpanAttributes, self()).
+
+%% Caller is the process the query runs for, when the driver runs it in another process: the span
+%% is a child of the caller's current span.
+-spec start(module(), reference(), map(), map(), pid()) -> ok.
+start(Module, Key, Attributes, SpanAttributes, Caller) ->
+    Span = otel_tracer:start_span(parent_context(Caller), tracer(Module), span_name(Attributes), #{
         kind => client,
         attributes => maps:merge(Attributes, SpanAttributes)
     }),
@@ -122,7 +128,12 @@ fail(Span, #{'error.type' := Type}) ->
 fail(_Span, _Errors) ->
     ok.
 
-parent_context() ->
+parent_context(Caller) when Caller =/= self() ->
+    case opentelemetry_process_propagator:fetch_ctx(Caller) of
+        undefined -> parent_context(self());
+        Ctx -> Ctx
+    end;
+parent_context(_Self) ->
     Ctx = otel_ctx:get_current(),
     case otel_tracer:current_span_ctx(Ctx) of
         undefined ->
