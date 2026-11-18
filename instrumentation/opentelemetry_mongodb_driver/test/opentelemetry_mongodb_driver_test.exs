@@ -55,16 +55,50 @@ defmodule OpentelemetryMongodbDriverTest do
 
     assert start_time < end_time
 
-    assert %{"server.address": address} = attributes = :otel_attributes.map(attributes)
+    attributes = :otel_attributes.map(attributes)
+    assert %{"server.address": address, "network.peer.address": peer} = attributes
     assert address in ["127.0.0.1", "localhost"]
+    assert peer in ["127.0.0.1", "localhost"]
 
-    assert Map.delete(attributes, :"server.address") == %{
+    assert Map.drop(attributes, [:"server.address", :"network.peer.address"]) == %{
              "db.system.name": :mongodb,
              "db.namespace": @database,
              "db.collection.name": "users",
              "db.operation.name": "find",
              "db.query.text": ~s({"find":"users","filter":{"name":"?"}})
            }
+  end
+
+  test "a retried write is one span", %{conn: conn} do
+    OpentelemetryMongodbDriver.setup()
+
+    {:ok, _} =
+      Mongo.admin_command(conn,
+        configureFailPoint: "failCommand",
+        mode: [times: 1],
+        data: [failCommands: ["insert"], errorCode: 91, errorLabels: ["RetryableWriteError"]]
+      )
+
+    {:ok, _} = Mongo.insert_one(conn, "users", %{name: "Ada"})
+
+    assert_receive {:span, span(name: "insert users", status: :undefined)}
+    refute_receive {:span, span(name: "insert users")}
+  end
+
+  test "a command that finds no server is a failed span" do
+    OpentelemetryMongodbDriver.setup()
+
+    {:ok, conn} =
+      Mongo.start_link(database: @database, seeds: ["127.0.0.1:1"], checkout_timeout: 200)
+
+    catch_exit(Mongo.find_one(conn, "users", %{}, checkout_timeout: 200))
+
+    assert_receive {:span,
+                    span(name: "find users", status: {:status, :error, _}, attributes: attributes)},
+                   1_000
+
+    assert %{"server.address": "127.0.0.1", "server.port": 1, "db.namespace": @database} =
+             :otel_attributes.map(attributes)
   end
 
   test "a command run in a task is a child of the span that started the task", %{conn: conn} do
@@ -214,17 +248,33 @@ defmodule OpentelemetryMongodbDriverTest do
                Jason.decode!(text)
     end
 
-    test "keeps only the first item of each list when obfuscated", %{conn: conn} do
+    test "keeps every key of every list item when obfuscated", %{conn: conn} do
       OpentelemetryMongodbDriver.setup(db_query_text: :obfuscated)
 
       {:ok, _} =
-        Mongo.insert_many(conn, "users", [%{name: "Ada", tags: ["a", "b"]}, %{name: "Grace"}])
+        Mongo.insert_many(conn, "users", [%{name: "Ada", tags: ["a", "b"]}, %{born: 1906}])
 
       assert_receive {:span, span(name: "insert users", attributes: attributes)}
       assert %{"db.query.text": text} = :otel_attributes.map(attributes)
 
-      assert %{"insert" => "users", "documents" => [%{"name" => "?", "tags" => ["?"]}]} =
-               Jason.decode!(text)
+      assert %{
+               "insert" => "users",
+               "documents" => [%{"name" => "?", "tags" => ["?", "?"]}, %{"born" => "?"}]
+             } = Jason.decode!(text)
+    end
+
+    test "stops building the obfuscated text at 2048 bytes", %{conn: conn} do
+      OpentelemetryMongodbDriver.setup(db_query_text: :obfuscated)
+
+      documents = for i <- 1..20_000, do: %{i: i, name: "user #{i}"}
+      {:ok, _} = Mongo.insert_many(conn, "users", documents)
+
+      assert_receive {:span, span(name: "insert users", attributes: attributes)}
+
+      assert %{"db.query.text": ~s({"insert":"users",) <> _ = text} =
+               :otel_attributes.map(attributes)
+
+      assert byte_size(text) in 2000..2048
     end
 
     test "is cut to its first 2048 bytes", %{conn: conn} do

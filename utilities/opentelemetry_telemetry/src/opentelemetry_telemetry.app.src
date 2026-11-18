@@ -8,6 +8,8 @@
     stdlib,
     opentelemetry,
     opentelemetry_api,
+    opentelemetry_api_experimental,
+    opentelemetry_process_propagator,
     telemetry
    ]},
   {env,[]},

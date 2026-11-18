@@ -2,12 +2,14 @@ defmodule OpentelemetryMongodbDriver do
   @moduledoc """
   Traces [mongodb_driver](https://hex.pm/packages/mongodb_driver) commands with OpenTelemetry.
 
-  Every command the driver reports on its `[:mongodb_driver, :command, :start | :stop |
+  Every operation the driver reports on its `[:mongodb_driver, :command, :start | :stop |
   :exception]` telemetry events becomes a `CLIENT` span and a `db.client.operation.duration`
-  measurement. That covers network errors and timeouts as well as server errors. The span is a
-  child of the current span of the process that ran the command, or, for a transaction's commit
-  or abort, of the process that ran the transaction. Requires the `:opentelemetry_telemetry`
-  application, whose span store ends the span of a caller that exits mid-command.
+  measurement. An operation covers its retries and the server selection of each, so a retried
+  write is one span, and a command that finds no server is a failed one. That covers network
+  errors and timeouts as well as server errors. The span is a child of the current span of the
+  process that ran the operation, or, in a task with no span of its own, of its caller's.
+  Requires the `:opentelemetry_telemetry` application, whose span store ends the span of a caller
+  that exits mid-operation.
 
   ## Usage
 
@@ -27,10 +29,13 @@ defmodule OpentelemetryMongodbDriver do
     * `db.namespace` - the database
     * `db.collection.name` - the collection, when the command names one
     * `db.operation.name` - the command, such as `find` or `findAndModify`
-    * `server.address` and `server.port` - the server; the port is left out when it is 27017
+    * `server.address` and `server.port` - the first server the client is configured with; the
+      port is left out when it is 27017
+    * `network.peer.address` and `network.peer.port` - the server the last attempt reached, on
+      the span only
     * `db.response.status_code` - the server's error code, when the command failed
     * `error.type` - the error code, or the error's module when it has no code
-    * `db.query.text` - the command, as the `:db_query_text` option says
+    * `db.query.text` - the command, as the `:db_query_text` option says, on the span only
 
   Spans are named `{db.operation.name} {target}`, where the target is the collection, or the
   database when the command names no collection.
@@ -38,18 +43,12 @@ defmodule OpentelemetryMongodbDriver do
   ## Metrics
 
   `db.client.operation.duration` is a histogram in seconds, recorded through
-  `opentelemetry_api_experimental` with the attributes above except `db.query.text`.
+  `opentelemetry_api_experimental` with the attributes above except the span-only ones.
   """
-
-  require OpenTelemetryAPIExperimental.Histogram, as: Histogram
 
   alias OpenTelemetry.SemConv.ErrorAttributes
   alias OpenTelemetry.SemConv.Incubating.DBAttributes
-  alias OpenTelemetry.SemConv.Incubating.Metrics.DBMetrics
   alias OpenTelemetry.SemConv.ServerAttributes
-
-  require OpenTelemetry.Tracer
-  require Logger
 
   @events [
     [:mongodb_driver, :command, :start],
@@ -57,16 +56,8 @@ defmodule OpentelemetryMongodbDriver do
     [:mongodb_driver, :command, :exception]
   ]
 
-  @metric_attributes [
-    :"db.system.name",
-    DBAttributes.db_namespace(),
-    DBAttributes.db_collection_name(),
-    DBAttributes.db_operation_name(),
-    ServerAttributes.server_address(),
-    ServerAttributes.server_port(),
-    :"db.response.status_code",
-    ErrorAttributes.error_type()
-  ]
+  @default_port 27017
+  @max_query_text_bytes 2048
 
   @options_schema NimbleOptions.new!(
                     db_query_text: [
@@ -76,11 +67,11 @@ defmodule OpentelemetryMongodbDriver do
                       Whether to record the command as `db.query.text`:
 
                         * `:disabled` - leave it out
-                        * `:obfuscated` - record it with the command and its collection, every
-                          other value replaced by `?` and every list cut to its first item
+                        * `:obfuscated` - record it with every key and its collection, and every
+                          other value replaced by `?`
                         * `:plain` - record it as it is, values included
 
-                      Recorded text is cut to its first 2048 bytes.
+                      Recorded text is built only up to its first 2048 bytes.
                       """
                     ]
                   )
@@ -91,103 +82,42 @@ defmodule OpentelemetryMongodbDriver do
   @doc """
   Attaches the telemetry handler.
 
+  The `:opentelemetry_telemetry` application must be started first.
+
   ## Options
 
   #{NimbleOptions.docs(@options_schema)}
   """
   @spec setup(opts()) :: :ok
   def setup(opts \\ []) do
-    config = Map.new(NimbleOptions.validate!(opts, @options_schema))
-
-    unless :otel_telemetry_spans.started() do
-      raise "the :opentelemetry_telemetry application must be started before OpentelemetryMongodbDriver.setup/1"
-    end
-
-    Histogram.create(DBMetrics.db_client_operation_duration(), %{
-      unit: :s,
-      description: "Duration of database client operations.",
-      advisory_params: %{
-        explicit_bucket_boundaries: [
-          0.001,
-          0.0025,
-          0.005,
-          0.01,
-          0.025,
-          0.05,
-          0.1,
-          0.25,
-          0.5,
-          1,
-          2.5,
-          5,
-          10
-        ]
-      }
-    })
-
-    _ = :telemetry.attach_many(__MODULE__, @events, &__MODULE__.handle_event/4, config)
-
-    :ok
+    :otel_db_client.attach(
+      __MODULE__,
+      @events,
+      Map.new(NimbleOptions.validate!(opts, @options_schema))
+    )
   end
 
   @doc false
-  def handle_event(event, measurements, metadata, config) do
-    handle(event, measurements, metadata, config)
-  rescue
-    error ->
-      Logger.error(
-        "#{inspect(__MODULE__)} failed: " <> Exception.format(:error, error, __STACKTRACE__)
-      )
-  catch
-    kind, reason ->
-      Logger.error(
-        "#{inspect(__MODULE__)} failed: " <> Exception.format(kind, reason, __STACKTRACE__)
-      )
+  def handle([:mongodb_driver, :command, :start], _measurements, metadata, config) do
+    :otel_db_client.start(
+      __MODULE__,
+      metadata.telemetry_span_context,
+      attributes(metadata),
+      maybe_put(%{}, DBAttributes.db_query_text(), query_text(metadata, config))
+    )
   end
 
-  defp handle([:mongodb_driver, :command, :start], _measurements, metadata, config) do
-    attributes =
-      %{
-        :"db.system.name" => :mongodb,
-        unquote(DBAttributes.db_operation_name()) => to_string(metadata.command)
-      }
-      |> maybe_put(DBAttributes.db_namespace(), metadata.database)
-      |> maybe_put(DBAttributes.db_collection_name(), metadata.collection)
-
-    span =
-      OpenTelemetry.Tracer.start_span(parent_context(metadata.caller), span_name(attributes), %{
-        kind: :client,
-        attributes:
-          maybe_put(attributes, DBAttributes.db_query_text(), query_text(metadata, config))
-      })
-
-    :otel_telemetry_spans.put(metadata.telemetry_span_context, span, attributes) ||
-      OpenTelemetry.Span.end_span(span)
+  def handle([:mongodb_driver, :command, :stop], %{duration: duration}, metadata, _config) do
+    :otel_db_client.stop(metadata.telemetry_span_context, duration, fn _span ->
+      {metadata.error
+       |> error_attributes()
+       |> maybe_put(DBAttributes.db_namespace(), metadata.database),
+       peer_attributes(metadata.address)}
+    end)
   end
 
-  defp handle([:mongodb_driver, :command, :stop], %{duration: duration}, metadata, _config) do
-    with {span, attributes} <- :otel_telemetry_spans.take(metadata.telemetry_span_context) do
-      attributes =
-        attributes
-        |> maybe_put(DBAttributes.db_namespace(), metadata.database)
-        |> Map.merge(server_attributes(metadata.address))
-
-      error = metadata.error
-      status_code = status_code(error)
-
-      error_attributes =
-        %{}
-        |> maybe_put(:"db.response.status_code", status_code)
-        |> maybe_put(ErrorAttributes.error_type(), error_type(error, status_code))
-
-      OpenTelemetry.Span.set_attributes(span, attributes)
-      OpenTelemetry.Span.update_name(span, span_name(attributes))
-      finish(span, attributes, error_attributes, duration)
-    end
-  end
-
-  defp handle([:mongodb_driver, :command, :exception], %{duration: duration}, metadata, _config) do
-    with {span, attributes} <- :otel_telemetry_spans.take(metadata.telemetry_span_context) do
+  def handle([:mongodb_driver, :command, :exception], %{duration: duration}, metadata, _config) do
+    :otel_db_client.stop(metadata.telemetry_span_context, duration, fn span ->
       %{kind: kind, reason: reason, stacktrace: stacktrace} = metadata
       exception = Exception.normalize(kind, reason, stacktrace)
 
@@ -195,73 +125,57 @@ defmodule OpentelemetryMongodbDriver do
         OpenTelemetry.Span.record_exception(span, exception, stacktrace)
       end
 
-      finish(
-        span,
-        attributes,
-        %{ErrorAttributes.error_type() => error_type(exception, nil)},
-        duration
-      )
-    end
+      {error_attributes(exception), %{}}
+    end)
   end
 
-  defp finish(span, attributes, error_attributes, duration) do
-    if error_type = error_attributes[ErrorAttributes.error_type()] do
-      OpenTelemetry.Span.set_attributes(span, error_attributes)
-      OpenTelemetry.Span.set_status(span, OpenTelemetry.status(:error, error_type))
-    end
+  defp attributes(metadata) do
+    %{
+      :"db.system.name" => :mongodb,
+      unquote(DBAttributes.db_operation_name()) => to_string(metadata.command)
+    }
+    |> maybe_put(DBAttributes.db_namespace(), metadata.database)
+    |> maybe_put(DBAttributes.db_collection_name(), metadata.collection)
+    |> Map.merge(server_attributes(metadata.servers))
+  end
 
-    OpenTelemetry.Span.end_span(span)
+  defp server_attributes([server | _]) do
+    {address, port} = host_port(server)
 
-    Histogram.record(
-      DBMetrics.db_client_operation_duration(),
-      System.convert_time_unit(duration, :native, :nanosecond) / 1_000_000_000,
-      attributes |> Map.merge(error_attributes) |> Map.take(@metric_attributes)
+    maybe_put(
+      %{ServerAttributes.server_address() => address},
+      ServerAttributes.server_port(),
+      port
     )
   end
 
-  defp parent_context(caller) when caller == self() do
-    ctx = OpenTelemetry.Ctx.get_current()
+  defp server_attributes([]), do: %{}
 
-    case OpenTelemetry.Tracer.current_span_ctx(ctx) do
-      :undefined ->
-        with :undefined <- OpentelemetryProcessPropagator.fetch_parent_ctx(1, :"$callers"),
-             do: ctx
+  defp peer_attributes(nil), do: %{}
 
-      _span ->
-        ctx
+  defp peer_attributes(peer) do
+    {address, port} = host_port(peer)
+    maybe_put(%{"network.peer.address": address}, :"network.peer.port", port)
+  end
+
+  defp host_port(server) do
+    case String.split(server, ":") do
+      [host, port] -> {host, port(port)}
+      _path -> {server, nil}
     end
   end
 
-  defp parent_context(caller) do
-    with :undefined <- OpentelemetryProcessPropagator.fetch_ctx(caller),
-         do: OpenTelemetry.Ctx.get_current()
-  end
+  defp port("27017"), do: nil
+  defp port(port), do: String.to_integer(port)
 
-  defp span_name(attributes) do
-    target =
-      attributes[DBAttributes.db_collection_name()] || attributes[DBAttributes.db_namespace()]
+  defp error_attributes(nil), do: %{}
 
-    Enum.join(Enum.reject([attributes[DBAttributes.db_operation_name()], target], &is_nil/1), " ")
-  end
-
-  defp server_attributes(nil), do: %{}
-
-  defp server_attributes(address) do
-    case String.split(address, ":") do
-      [host, port] ->
-        maybe_put(
-          %{ServerAttributes.server_address() => host},
-          ServerAttributes.server_port(),
-          server_port(port)
-        )
-
-      _path ->
-        %{ServerAttributes.server_address() => address}
+  defp error_attributes(error) do
+    case status_code(error) do
+      nil -> %{ErrorAttributes.error_type() => error_type(error)}
+      code -> %{:"db.response.status_code" => code, ErrorAttributes.error_type() => code}
     end
   end
-
-  defp server_port("27017"), do: nil
-  defp server_port(port), do: String.to_integer(port)
 
   defp status_code(%{__struct__: Mongo.Error, code: code}) when is_integer(code),
     do: Integer.to_string(code)
@@ -272,50 +186,69 @@ defmodule OpentelemetryMongodbDriver do
 
   defp status_code(_error), do: nil
 
-  defp error_type(nil, _status_code), do: nil
-  defp error_type(_error, status_code) when is_binary(status_code), do: status_code
-  defp error_type(%module{}, nil), do: inspect(module)
-  defp error_type(_error, nil), do: "_OTHER"
+  defp error_type(%module{}), do: inspect(module)
+  defp error_type(_error), do: "_OTHER"
 
   defp query_text(_metadata, %{db_query_text: :disabled}), do: nil
 
-  defp query_text(metadata, config) do
-    command_text([{metadata.command, metadata.collection} | metadata.params], config)
+  defp query_text(%{cmd: cmd, collection: collection}, %{db_query_text: mode}) do
+    {text, _budget} = object(cmd, {mode, collection}, @max_query_text_bytes)
+    text |> IO.iodata_to_binary() |> :otel_db_query_text.truncate()
   rescue
     _error -> nil
   end
 
-  defp command_text(command, %{db_query_text: :plain}),
-    do: command |> encodable() |> Jason.encode!() |> :otel_db_query_text.truncate()
+  defp json(_value, _mode, budget) when budget <= 0, do: {[], budget}
 
-  defp command_text([{operation, target} | arguments], %{db_query_text: :obfuscated}) do
-    [
-      {operation, plain(target)}
-      | Enum.map(arguments, fn {key, value} -> {key, obfuscate(value)} end)
-    ]
-    |> Jason.OrderedObject.new()
-    |> Jason.encode!()
-    |> :otel_db_query_text.truncate()
+  defp json(value, {_mode, value} = mode, budget) when is_binary(value),
+    do: leaf(value, mode, budget, :plain)
+
+  defp json(value, mode, budget) when is_map(value) and not is_struct(value),
+    do: object(Map.to_list(value), mode, budget)
+
+  defp json([{key, _} | _] = value, mode, budget) when is_atom(key) or is_binary(key),
+    do: object(value, mode, budget)
+
+  defp json(value, mode, budget) when is_list(value), do: array(value, mode, budget)
+  defp json(value, {mode, _collection} = context, budget), do: leaf(value, context, budget, mode)
+
+  defp object(pairs, mode, budget) do
+    {items, budget} =
+      join(pairs, budget - 1, fn {key, value}, budget ->
+        key = Jason.encode!(to_string(key)) <> ":"
+        {value, budget} = json(value, mode, budget - byte_size(key))
+        {[key | value], budget}
+      end)
+
+    {["{", items, "}"], budget - 1}
   end
 
-  defp encodable(value) when is_map(value) and not is_struct(value),
-    do: Map.new(value, fn {key, item} -> {key, encodable(item)} end)
+  defp array(values, mode, budget) do
+    {items, budget} = join(values, budget - 1, &json(&1, mode, &2))
+    {["[", items, "]"], budget - 1}
+  end
 
-  defp encodable([{key, _} | _] = value) when is_atom(key) or is_binary(key),
-    do: Jason.OrderedObject.new(Enum.map(value, fn {key, item} -> {key, encodable(item)} end))
+  defp join(values, budget, encode) do
+    {items, budget} =
+      Enum.reduce_while(values, {[], budget}, fn value, {items, budget} ->
+        if budget <= 0 do
+          {:halt, {items, budget}}
+        else
+          separator = if items == [], do: [], else: ","
+          {item, budget} = encode.(value, budget - byte_size(IO.iodata_to_binary(separator)))
+          {:cont, {[item, separator | items], budget}}
+        end
+      end)
 
-  defp encodable(value) when is_list(value), do: Enum.map(value, &encodable/1)
-  defp encodable(value), do: plain(value)
+    {Enum.reverse(items), budget}
+  end
 
-  defp obfuscate(value) when is_map(value) and not is_struct(value),
-    do: Map.new(value, fn {key, item} -> {key, obfuscate(item)} end)
+  defp leaf(_value, _context, budget, :obfuscated), do: {~s("?"), budget - 3}
 
-  defp obfuscate([{key, _} | _] = value) when is_atom(key) or is_binary(key),
-    do: Jason.OrderedObject.new(Enum.map(value, fn {key, item} -> {key, obfuscate(item)} end))
-
-  defp obfuscate([first | _]), do: [obfuscate(first)]
-  defp obfuscate([]), do: []
-  defp obfuscate(_value), do: "?"
+  defp leaf(value, _context, budget, :plain) do
+    text = Jason.encode!(plain(value))
+    {text, budget - byte_size(text)}
+  end
 
   defp plain(value) when is_struct(value) or is_tuple(value) do
     if String.Chars.impl_for(value), do: to_string(value), else: inspect(value)
