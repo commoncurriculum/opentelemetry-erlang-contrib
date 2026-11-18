@@ -1,13 +1,35 @@
 defmodule OpentelemetryOban.JobHandler do
   @moduledoc false
 
+  require OpenTelemetryAPIExperimental.Histogram
+
   alias OpenTelemetry.Ctx
   alias OpenTelemetry.Span
   alias OpenTelemetry.Tracer
+  alias OpenTelemetry.SemConv.ErrorAttributes
   alias OpenTelemetry.SemConv.Incubating.MessagingAttributes
+  alias OpenTelemetry.SemConv.Incubating.Metrics.MessagingMetrics
+  alias OpenTelemetryAPIExperimental.Histogram
   alias OpentelemetryOban.Errors
 
   @tracer_id __MODULE__
+
+  @process_duration_boundaries [
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.075,
+    0.1,
+    0.25,
+    0.5,
+    0.75,
+    1,
+    2.5,
+    5,
+    7.5,
+    10
+  ]
 
   @options_schema [
     span_relationship: [
@@ -35,6 +57,12 @@ defmodule OpentelemetryOban.JobHandler do
       opts
       |> NimbleOptions.validate!(@nimble_options_schema)
       |> Enum.into(%{})
+
+    Histogram.create(MessagingMetrics.messaging_process_duration(), %{
+      unit: :s,
+      description: "Duration of processing operation.",
+      advisory_params: %{explicit_bucket_boundaries: @process_duration_boundaries}
+    })
 
     attach_job_start_handler(config)
     attach_job_stop_handler(config)
@@ -117,6 +145,7 @@ defmodule OpentelemetryOban.JobHandler do
 
   def handle_job_stop(_event, measurements, metadata, _config) do
     set_measurements_attributes(measurements)
+    record_process_duration(measurements, metadata, %{})
     OpentelemetryTelemetry.end_telemetry_span(@tracer_id, metadata)
   end
 
@@ -134,8 +163,34 @@ defmodule OpentelemetryOban.JobHandler do
 
     set_measurements_attributes(measurements)
 
+    record_process_duration(measurements, metadata, %{
+      ErrorAttributes.error_type() => process_error_type(reason)
+    })
+
     OpentelemetryTelemetry.end_telemetry_span(@tracer_id, metadata)
   end
+
+  defp record_process_duration(%{duration: duration}, %{job: %{queue: queue}}, attributes) do
+    Histogram.record(
+      MessagingMetrics.messaging_process_duration(),
+      System.convert_time_unit(duration, :native, :nanosecond) / 1_000_000_000,
+      Map.merge(
+        %{
+          :"messaging.system.name" => :oban,
+          MessagingAttributes.messaging_operation_name() => "process",
+          MessagingAttributes.messaging_operation_type() =>
+            MessagingAttributes.messaging_operation_type_values().process,
+          MessagingAttributes.messaging_destination_name() => queue
+        },
+        attributes
+      )
+    )
+  end
+
+  defp process_error_type(%struct_name{} = reason) when is_exception(reason),
+    do: inspect(struct_name)
+
+  defp process_error_type(_reason), do: "_OTHER"
 
   defp set_measurements_attributes(%{duration: duration, queue_time: queue_time}) do
     OpenTelemetry.Tracer.set_attributes(%{
