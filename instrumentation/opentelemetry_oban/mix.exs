@@ -52,6 +52,7 @@ defmodule OpentelemetryOban.MixProject do
   defp deps do
     [
       {:oban, "~> 2.0"},
+      {:oban_met, "~> 1.0", optional: true},
       {:opentelemetry_api, "~> 1.4"},
       {:opentelemetry_api_experimental, "~> 0.6.0"},
       {:opentelemetry_telemetry, "~> 1.1"},
