@@ -12,6 +12,7 @@
          setup/0,
          setup/1,
          handle_event/4,
+         handle_active_requests_event/4,
          default_public_endpoint_fn/2]).
 
 -include_lib("opentelemetry_api/include/opentelemetry.hrl").
@@ -158,9 +159,11 @@ setup(Opts) ->
 meter() ->
     opentelemetry_experimental:get_meter(opentelemetry:get_application_scope(?MODULE)).
 
-add_active_request(Delta, Req, Config) ->
+?DOC(false).
+handle_active_requests_event([cowboy, request, Event], _Measurements, #{req := Req}, Config) ->
     #{method := ReqMethod} = Req,
     Attrs = #{?HTTP_REQUEST_METHOD => parse_method(ReqMethod), ?URL_SCHEME => extract_scheme(Req, Config)},
+    Delta = case Event of start -> 1; _ -> -1 end,
     otel_updown_counter:add(
         otel_ctx:get_current(),
         meter(),
@@ -169,14 +172,23 @@ add_active_request(Delta, Req, Config) ->
         maps:filter(fun(_K, V) -> V =/= undefined end, Attrs)
     ).
 
+%% Metrics get their own handler: telemetry detaches a handler that raises, and a
+%% metrics failure must not take the spans down with it.
 attach_event_handlers(Config) ->
+    HandlerId = maps:get(handler_id, Config),
     Events = [
               [cowboy, request, early_error],
               [cowboy, request, start],
               [cowboy, request, stop],
               [cowboy, request, exception]
              ],
-    telemetry:attach_many({?MODULE, maps:get(handler_id, Config)}, Events, fun ?MODULE:handle_event/4, Config).
+    telemetry:attach_many({?MODULE, HandlerId}, Events, fun ?MODULE:handle_event/4, Config),
+    telemetry:attach_many(
+        {?MODULE, HandlerId, active_requests},
+        [[cowboy, request, start], [cowboy, request, stop], [cowboy, request, exception]],
+        fun ?MODULE:handle_active_requests_event/4,
+        Config
+    ).
 
 parse_method(Method) ->
     case Method of
@@ -315,7 +327,6 @@ handle_event([cowboy, request, start], _Measurements, #{req := Req} = Meta, Conf
     },
 
     Method = parse_method(ReqMethod),
-    add_active_request(1, Req, Config),
 
     Attrs0 = #{
                 ?HTTP_REQUEST_METHOD => Method,
@@ -360,9 +371,8 @@ handle_event([cowboy, request, start], _Measurements, #{req := Req} = Meta, Conf
     end;
 
 
-handle_event([cowboy, request, stop], Measurements, #{req := Req} = Meta, Config) ->
+handle_event([cowboy, request, stop], Measurements, Meta, Config) ->
     Ctx = otel_telemetry:set_current_telemetry_span(?TRACER_ID, Meta),
-    add_active_request(-1, Req, Config),
     #{
         resp_headers := RespHeaders,
         resp_status := Status
@@ -413,9 +423,8 @@ handle_event([cowboy, request, stop], Measurements, #{req := Req} = Meta, Config
     otel_telemetry:end_telemetry_span(?TRACER_ID, Meta),
     otel_ctx:clear();
 
-handle_event([cowboy, request, exception], Measurements, #{req := Req} = Meta, Config) ->
+handle_event([cowboy, request, exception], Measurements, Meta, Config) ->
     Ctx = otel_telemetry:set_current_telemetry_span(?TRACER_ID, Meta),
-    add_active_request(-1, Req, Config),
     #{
         opt_in_attrs := OptedInAttrs
     } = Config,

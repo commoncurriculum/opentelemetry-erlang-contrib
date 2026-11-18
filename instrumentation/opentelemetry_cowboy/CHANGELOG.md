@@ -9,6 +9,8 @@
 
 ### Fixed
 
+* Record `http.server.active_requests` from its own telemetry handler. It was recorded inside the span handler, so a metrics failure (such as the metrics SDK having stopped) made `telemetry` detach the span handler and tracing stopped until the next `setup/1`.
+
 * Set the span status to error when the client closes the socket or the connection fails before a response is sent, and for early errors. Cowboy gives the reason as an atom, so `opentelemetry:status/2` returned `undefined` and the status stayed unset.
 
 # v1.0.0

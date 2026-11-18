@@ -34,7 +34,8 @@ all() ->
         chunk_timeout_request,
         bad_request,
         binary_status_code_request,
-        active_requests_metric
+        active_requests_metric,
+        metrics_failure_keeps_tracing
     ].
 
 init_per_suite(Config) ->
@@ -84,6 +85,7 @@ init_per_testcase(_, Config) ->
 
 end_per_testcase(_, Config) ->
     telemetry:detach({opentelemetry_cowboy, otel_cowboy}),
+    telemetry:detach({opentelemetry_cowboy, otel_cowboy, active_requests}),
     Config.
 
 successful_request_with_default_config(_Config) ->
@@ -559,6 +561,24 @@ active_requests_metric(_Config) ->
         httpc:request(trace, {"http://localhost:8080/", []}, [], [{socket_opts, [{port, 62682}]}]),
     ?assertEqual(0, await_active_requests(0, Attrs)),
     ?assertEqual([], [A || #{?HTTP_REQUEST_METHOD := 'TRACE'} = A <- active_requests_attributes()]).
+
+metrics_failure_keeps_tracing(_Config) ->
+    opentelemetry_cowboy:setup(),
+    ok = application:stop(opentelemetry_experimental),
+    try
+        {ok, {{_, 200, _}, _, _}} =
+            httpc:request(get, {"http://localhost:8080/success", []}, [], [{socket_opts, [{port, 62683}]}]),
+        receive
+            {span, #span{name = 'GET'}} -> ok
+        after
+            1000 -> ct:fail(no_span)
+        end,
+        HandlerIds = [Id || #{id := Id} <- telemetry:list_handlers([cowboy, request])],
+        ?assert(lists:member({opentelemetry_cowboy, otel_cowboy}, HandlerIds)),
+        ?assertNot(lists:member({opentelemetry_cowboy, otel_cowboy, active_requests}, HandlerIds))
+    after
+        {ok, _} = application:ensure_all_started(opentelemetry_experimental)
+    end.
 
 active_requests_attributes() ->
     flush_metrics(),
