@@ -376,4 +376,88 @@ defmodule OpentelemetryOban.JobHandlerTest do
       refute_receive {:span, span(name: "process events")}, 100
     end
   end
+
+  describe "messaging.process.duration" do
+    setup do
+      setup_otel()
+      OpentelemetryOban.setup()
+      Process.register(self(), :opentelemetry_oban_metrics)
+      :ok
+    end
+
+    test "records one measurement per processed job, with error.type for failures" do
+      before = process_duration_counts()
+
+      for worker <- [
+            TestJob,
+            TestJobThatRaisesException,
+            TestJobThatReturnsError,
+            TestJobThatThrowsValue
+          ] do
+        Oban.insert(worker.new(%{}))
+      end
+
+      assert %{success: 1, discard: 3} = Oban.drain_queue(queue: :events)
+
+      job = %{
+        "messaging.system.name": :oban,
+        "messaging.operation.name": "process",
+        "messaging.operation.type": :process,
+        "messaging.destination.name": "events"
+      }
+
+      expected =
+        Map.merge(
+          before,
+          %{
+            job => 1,
+            Map.put(job, :"error.type", "UndefinedFunctionError") => 1,
+            Map.put(job, :"error.type", "Oban.PerformError") => 1,
+            Map.put(job, :"error.type", "Oban.CrashError") => 1
+          },
+          fn _attributes, count, new -> count + new end
+        )
+
+      assert process_duration_counts() == expected
+    end
+
+    test "a metrics failure leaves the job spans attached" do
+      :ok = Application.stop(:opentelemetry_experimental)
+      on_exit(fn -> {:ok, _} = Application.ensure_all_started(:opentelemetry_experimental) end)
+
+      Oban.insert(TestJob.new(%{}))
+      assert %{success: 1} = Oban.drain_queue(queue: :events)
+
+      assert_receive {:span, span(name: "process events")}
+
+      handler_ids = Enum.map(:telemetry.list_handlers([:oban, :job]), & &1.id)
+      assert "#{OpentelemetryOban.JobHandler}.job_stop" in handler_ids
+      refute "#{OpentelemetryOban.JobHandler}.process_duration" in handler_ids
+    end
+  end
+
+  for name <- [:metric, :histogram, :histogram_datapoint] do
+    Record.defrecord(
+      name,
+      Record.extract(name, from_lib: "opentelemetry_experimental/include/otel_metrics.hrl")
+    )
+  end
+
+  defp process_duration_counts do
+    :otel_meter_server.force_flush()
+
+    receive do
+      {:otel_metric,
+       metric(
+         name: :"messaging.process.duration",
+         unit: :s,
+         data: histogram(datapoints: datapoints)
+       )} ->
+        Map.new(datapoints, fn histogram_datapoint(attributes: attributes, count: count) ->
+          {attributes, count}
+        end)
+    after
+      100 -> %{}
+    end
+  end
 end
