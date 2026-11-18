@@ -6,6 +6,7 @@
    [kernel,
     stdlib,
     opentelemetry_api,
+    opentelemetry_api_experimental,
     opentelemetry_telemetry,
     otel_http,
     telemetry
