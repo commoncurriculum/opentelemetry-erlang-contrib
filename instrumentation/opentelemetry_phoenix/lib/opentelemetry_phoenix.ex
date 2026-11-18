@@ -68,14 +68,55 @@ defmodule OpentelemetryPhoenix do
         Supervisor.start_link(children, opts)
       end
 
+  ## Metrics
+
+  `setup/1` creates the `http.server.request.duration` histogram (seconds) and records one
+  measurement per request that passes through the endpoint's `Plug.Telemetry`, including
+  requests whose exception Phoenix renders as an error page. WebSocket upgrades are dispatched
+  before `Plug.Telemetry` and are not recorded. Measurements carry `http.request.method`,
+  `url.scheme`, `http.response.status_code`, `http.route` (when the router matched),
+  `network.protocol.version`, and `error.type` (the status code, for 5xx responses).
+
+  Recording is a no-op unless the `opentelemetry_experimental` SDK is started before `setup/1`.
+
   """
+  require OpenTelemetryAPIExperimental.Histogram
+
+  alias OpenTelemetry.SemConv.ErrorAttributes
   alias OpenTelemetry.SemConv.Incubating.HTTPAttributes
+  alias OpenTelemetry.SemConv.Metrics.HTTPMetrics
+  alias OpenTelemetry.SemConv.NetworkAttributes
+  alias OpenTelemetry.SemConv.URLAttributes
+  alias OpenTelemetryAPIExperimental.Histogram
 
   alias OpenTelemetry.Tracer
 
   @tracer_id __MODULE__
 
   @live_view_route_key {__MODULE__, :live_view_route}
+  @request_start_key {__MODULE__, :request_start}
+  @request_route_key {__MODULE__, :request_route}
+
+  @known_methods HTTPAttributes.http_request_method_values()
+                 |> Map.delete(:other)
+                 |> Map.new(fn {_key, method} -> {Atom.to_string(method), method} end)
+
+  @request_duration_boundaries [
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.075,
+    0.1,
+    0.25,
+    0.5,
+    0.75,
+    1,
+    2.5,
+    5,
+    7.5,
+    10
+  ]
 
   @typedoc "Setup options"
   @type opts :: [
@@ -106,6 +147,7 @@ defmodule OpentelemetryPhoenix do
 
     attach_endpoint_start_handler(opts)
     attach_router_start_handler(opts)
+    attach_request_duration_handlers(opts)
 
     if opts[:liveview] do
       attach_liveview_handlers(opts)
@@ -138,6 +180,30 @@ defmodule OpentelemetryPhoenix do
     )
   end
 
+  @doc false
+  def attach_request_duration_handlers(opts) do
+    Histogram.create(HTTPMetrics.http_server_request_duration(), %{
+      unit: :s,
+      description: "Duration of HTTP server requests.",
+      advisory_params: %{explicit_bucket_boundaries: @request_duration_boundaries}
+    })
+
+    :telemetry.attach_many(
+      {__MODULE__, opts[:endpoint_prefix], :request_duration},
+      [opts[:endpoint_prefix] ++ [:start], opts[:endpoint_prefix] ++ [:stop]],
+      &__MODULE__.handle_request_duration_event/4,
+      %{}
+    )
+
+    :telemetry.attach(
+      {__MODULE__, :error_rendered},
+      [:phoenix, :error_rendered],
+      &__MODULE__.handle_request_duration_event/4,
+      %{}
+    )
+  end
+
+  @doc false
   def attach_liveview_handlers(opts \\ []) do
     :telemetry.attach_many(
       {__MODULE__, :live_view},
@@ -206,8 +272,60 @@ defmodule OpentelemetryPhoenix do
       HTTPAttributes.http_route() => meta.route
     }
 
+    Process.put(@request_route_key, meta.route)
+
     Tracer.update_name("#{meta.conn.method} #{meta.route}")
     Tracer.set_attributes(attributes)
+  end
+
+  @doc false
+  def handle_request_duration_event([:phoenix, :error_rendered], _measurements, meta, _config) do
+    case Process.get(@request_start_key) do
+      nil -> :ok
+      start -> record_request_duration(System.monotonic_time() - start, meta.conn, meta.status)
+    end
+  end
+
+  def handle_request_duration_event(event, measurements, meta, _config) do
+    case List.last(event) do
+      :start ->
+        Process.put(@request_start_key, System.monotonic_time())
+        Process.delete(@request_route_key)
+
+      :stop ->
+        record_request_duration(measurements.duration, meta.conn, meta.conn.status)
+    end
+  end
+
+  defp record_request_duration(duration, conn, status) do
+    route = Process.delete(@request_route_key)
+    Process.delete(@request_start_key)
+
+    attributes =
+      %{
+        HTTPAttributes.http_request_method() => Map.get(@known_methods, conn.method, :_OTHER),
+        URLAttributes.url_scheme() => conn.scheme,
+        HTTPAttributes.http_response_status_code() => status,
+        HTTPAttributes.http_route() => route,
+        NetworkAttributes.network_protocol_version() => protocol_version(conn),
+        ErrorAttributes.error_type() => if(status >= 500, do: Integer.to_string(status))
+      }
+      |> Map.reject(fn {_key, value} -> is_nil(value) end)
+
+    Histogram.record(
+      HTTPMetrics.http_server_request_duration(),
+      System.convert_time_unit(duration, :native, :nanosecond) / 1_000_000_000,
+      attributes
+    )
+  end
+
+  defp protocol_version(conn) do
+    case Plug.Conn.get_http_protocol(conn) do
+      :"HTTP/1.0" -> :"1.0"
+      :"HTTP/1.1" -> :"1.1"
+      :"HTTP/2" -> :"2"
+      _ -> nil
+    end
   end
 
   def handle_liveview_event(

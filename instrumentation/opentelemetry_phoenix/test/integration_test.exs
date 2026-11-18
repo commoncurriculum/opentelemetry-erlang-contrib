@@ -147,6 +147,13 @@ if otp_vsn >= 27 do
       Record.defrecord(name, spec)
     end
 
+    for name <- [:metric, :histogram, :histogram_datapoint] do
+      Record.defrecord(
+        name,
+        Record.extract(name, from_lib: "opentelemetry_experimental/include/otel_metrics.hrl")
+      )
+    end
+
     alias OpenTelemetry.SemConv.ClientAttributes
     alias OpenTelemetry.SemConv.ErrorAttributes
     alias OpenTelemetry.SemConv.ExceptionAttributes
@@ -247,12 +254,47 @@ if otp_vsn >= 27 do
       )
     end
 
+    defp request_duration_counts do
+      :otel_meter_server.force_flush()
+
+      receive do
+        {:otel_metric,
+         metric(
+           name: :"http.server.request.duration",
+           unit: :s,
+           data: histogram(datapoints: datapoints)
+         )} ->
+          Map.new(datapoints, fn histogram_datapoint(attributes: attributes, count: count) ->
+            {attributes, count}
+          end)
+      after
+        100 -> %{}
+      end
+    end
+
+    # The error_rendered event fires after the error page reaches the client.
+    defp await_request_duration_counts(expected, attempts \\ 50) do
+      counts = request_duration_counts()
+
+      if counts == expected or attempts == 0 do
+        counts
+      else
+        Process.sleep(20)
+        await_request_duration_counts(expected, attempts - 1)
+      end
+    end
+
     # Finch 0.22+ returns :pool_not_available while a fresh HTTP/2 connection
     # is still being established. Retrying it is safe with the otherwise
     # disabled retries: the request never reached the server, so it cannot
     # produce duplicate spans.
     defp retry_pool_not_available(_request, %Req.HTTPError{reason: :pool_not_available}), do: true
     defp retry_pool_not_available(_request, _response_or_exception), do: false
+
+    # The server closes the connection after rendering an exception, so the next
+    # request on that pooled connection fails before reaching the server.
+    defp retry_closed_connection(_request, %Req.TransportError{reason: :closed}), do: true
+    defp retry_closed_connection(request, response), do: retry_pool_not_available(request, response)
 
     adapter_suites =
       for adapter <- [:bandit, :cowboy], protocol <- [:http1, :http2], do: {adapter, protocol}
@@ -309,6 +351,65 @@ if otp_vsn >= 27 do
             user_agent = Map.get(attrs, UserAgentAttributes.user_agent_original())
             assert String.starts_with?(user_agent, "req/")
             assert OpenTelemetry.Tracer.current_span_ctx() == :undefined
+          end)
+        end
+
+        test "records http.server.request.duration", %{unquote(adapter) => adapter_info} do
+          capture_log(fn ->
+            {:ok, _} = start_supervised(adapter_info.spec)
+            setup_adapter(unquote(adapter))
+            Process.register(self(), :opentelemetry_phoenix_metrics)
+
+            before = request_duration_counts()
+
+            for {method, path} <- [
+                  {:get, "/users/1234"},
+                  {:get, "/router/oops"},
+                  {:get, "/oops"},
+                  {"PURGE", "/users/1234"}
+                ] do
+              Req.request(
+                method: method,
+                url: "http://localhost:#{adapter_info.port}#{path}",
+                retry: &retry_closed_connection/2,
+                retry_delay: 100,
+                retry_log_level: false,
+                connect_options: [protocols: [unquote(protocol)]]
+              )
+            end
+
+            request = %{
+              HTTPAttributes.http_request_method() => :GET,
+              URLAttributes.url_scheme() => :http,
+              NetworkAttributes.network_protocol_version() => if(unquote(protocol) == :http1, do: :"1.1", else: :"2")
+            }
+
+            expected =
+              Map.merge(
+                before,
+                %{
+                  Map.merge(request, %{
+                    HTTPAttributes.http_route() => "/users/:user_id",
+                    HTTPAttributes.http_response_status_code() => 200
+                  }) => 1,
+                  Map.merge(request, %{
+                    HTTPAttributes.http_route() => "/router/oops",
+                    HTTPAttributes.http_response_status_code() => 500,
+                    ErrorAttributes.error_type() => "500"
+                  }) => 1,
+                  Map.merge(request, %{
+                    HTTPAttributes.http_response_status_code() => 500,
+                    ErrorAttributes.error_type() => "500"
+                  }) => 1,
+                  Map.merge(request, %{
+                    HTTPAttributes.http_request_method() => :_OTHER,
+                    HTTPAttributes.http_response_status_code() => 404
+                  }) => 1
+                },
+                fn _attributes, count, new -> count + new end
+              )
+
+            assert await_request_duration_counts(expected) == expected
           end)
         end
 

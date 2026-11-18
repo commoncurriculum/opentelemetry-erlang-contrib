@@ -64,6 +64,7 @@ defmodule OpentelemetryPhoenix.MixProject do
     [
       {:nimble_options, "~> 1.0"},
       {:opentelemetry_api, "~> 1.4"},
+      {:opentelemetry_api_experimental, "~> 0.6.0"},
       {:opentelemetry_telemetry, "~> 1.1"},
       {:opentelemetry_process_propagator, "~> 0.3"},
       {:opentelemetry_semantic_conventions, "~> 1.27"},
@@ -73,6 +74,7 @@ defmodule OpentelemetryPhoenix.MixProject do
       {:cowboy_telemetry, "== 0.4.0", only: [:dev, :test]},
       {:opentelemetry_exporter, "== 1.11.0", only: [:dev, :test]},
       {:opentelemetry, "== 1.7.0", only: [:dev, :test]},
+      {:opentelemetry_experimental, "== 0.6.0", only: [:dev, :test]},
       {:opentelemetry_bandit, "== 0.3.0", only: [:dev, :test]},
       {:opentelemetry_cowboy, "== 1.0.0", only: [:dev, :test]},
       {:ex_doc, "== 0.40.4", only: [:dev], runtime: false},
