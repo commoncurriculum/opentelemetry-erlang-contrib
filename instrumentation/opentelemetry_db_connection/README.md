@@ -3,10 +3,13 @@
 Records [DBConnection](https://hex.pm/packages/db_connection) pool timings with OpenTelemetry,
 following the
 [database client connection metrics](https://opentelemetry.io/docs/specs/semconv/database/database-metrics/#connection-pools):
-`db.client.connection.wait_time` and `db.client.connection.use_time`, for every driver built on
-DBConnection (Postgrex, ch, mongodb_driver, MyXQL and others), whether or not Ecto is in use.
+`db.client.connection.wait_time`, `db.client.connection.use_time`,
+`db.client.connection.timeouts`, `db.client.connection.count`, `db.client.connection.max` and
+`db.client.connection.pending_requests`, for every driver built on DBConnection (Postgrex, ch,
+mongodb_driver, MyXQL and others), whether or not Ecto is in use.
 
-It needs a DBConnection that emits `[:db_connection, :checkout | :checkin]` telemetry.
+It needs a DBConnection that emits `[:db_connection, :checkout | :checkin]` and
+`[:db_connection, :pool, :init]` telemetry.
 
 ## Installation
 

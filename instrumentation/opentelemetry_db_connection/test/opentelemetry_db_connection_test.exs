@@ -38,7 +38,7 @@ defmodule OpentelemetryDBConnectionTest do
          password: "postgres",
          database: "postgres"
        ] ++ opts},
-      id: make_ref()
+      id: opts[:label] || make_ref()
     )
   end
 
@@ -192,6 +192,69 @@ defmodule OpentelemetryDBConnectionTest do
                  "db.system.name": :postgresql
                })
            )
+  end
+
+  test "a running pool reports its connections, size and queued callers until it stops" do
+    pool = postgres(label: "otel_gauge_pool", pool_size: 1)
+
+    connected? = fn -> match?({:ok, _}, Postgrex.query(pool, "SELECT 1", [])) end
+    assert Enum.any?(1..100, fn _ -> connected?.() || (Process.sleep(20) && false) end)
+
+    attributes = %{
+      "db.client.connection.pool.name": "otel_gauge_pool",
+      "db.system.name": :postgresql
+    }
+
+    assert pool_gauges(attributes) == %{
+             "db.client.connection.count": %{idle: 1, used: 0},
+             "db.client.connection.max": [1],
+             "db.client.connection.pending_requests": [0]
+           }
+
+    test = self()
+
+    Task.start(fn ->
+      DBConnection.run(pool, fn _conn ->
+        send(test, :holding)
+        Process.sleep(500)
+      end)
+    end)
+
+    assert_receive :holding, 2_000
+    Task.start(fn -> Postgrex.query(pool, "SELECT 1", []) end)
+    Process.sleep(50)
+
+    assert pool_gauges(attributes) == %{
+             "db.client.connection.count": %{idle: 0, used: 1},
+             "db.client.connection.max": [1],
+             "db.client.connection.pending_requests": [1]
+           }
+
+    stop_supervised!("otel_gauge_pool")
+
+    assert pool_gauges(attributes) == %{
+             "db.client.connection.count": %{},
+             "db.client.connection.max": [],
+             "db.client.connection.pending_requests": []
+           }
+  end
+
+  defp pool_gauges(attributes) do
+    :otel_meter_server.force_flush()
+    metrics = collect_metrics()
+
+    values = fn name ->
+      for datapoint(value: value, attributes: datapoint_attributes) <- Map.get(metrics, name, []),
+          {state, ^attributes} <- [Map.pop(datapoint_attributes, :"db.client.connection.state")],
+          do: {state, value}
+    end
+
+    %{
+      "db.client.connection.count": Map.new(values.(:"db.client.connection.count")),
+      "db.client.connection.max": Keyword.values(values.(:"db.client.connection.max")),
+      "db.client.connection.pending_requests":
+        Keyword.values(values.(:"db.client.connection.pending_requests"))
+    }
   end
 
   defp collect_metrics(acc \\ %{}) do
