@@ -33,7 +33,7 @@ defmodule OpentelemetryChTest do
     :ok
   end
 
-  test "a query is a client span named after its operation and database, under the current span",
+  test "a query is a client span named after its summary, under the current span",
        %{conn: conn, hostname: hostname} do
     OpentelemetryCh.setup()
 
@@ -45,7 +45,7 @@ defmodule OpentelemetryChTest do
 
     assert_receive {:span,
                     span(
-                      name: "SELECT " <> @database,
+                      name: "SELECT",
                       kind: :client,
                       parent_span_id: ^parent_span_id,
                       start_time: start_time,
@@ -59,7 +59,7 @@ defmodule OpentelemetryChTest do
     assert :otel_attributes.map(attributes) == %{
              "db.system.name": :clickhouse,
              "db.namespace": @database,
-             "db.operation.name": "SELECT",
+             "db.query.summary": "SELECT",
              "db.query.text": "SELECT {a:UInt8}",
              "db.response.returned_rows": 1,
              "server.address": hostname
@@ -71,7 +71,7 @@ defmodule OpentelemetryChTest do
 
     Ch.query!(conn, "INSERT INTO events FORMAT RowBinary", [["Ada"]], types: ["String"])
 
-    assert_receive {:span, span(name: "INSERT " <> @database, attributes: attributes)}
+    assert_receive {:span, span(name: "INSERT events", attributes: attributes)}
     refute Map.has_key?(:otel_attributes.map(attributes), :"db.response.returned_rows")
   end
 
@@ -89,7 +89,7 @@ defmodule OpentelemetryChTest do
 
     Ch.query!(conn, "INSERT INTO events FORMAT RowBinary", [["Ada"]], types: ["String"])
 
-    assert_receive {:span, span(name: "INSERT " <> @database)}
+    assert_receive {:span, span(name: "INSERT events")}
   end
 
   test "a streamed read is one span that ends after its last row", %{conn: conn} do
@@ -103,11 +103,11 @@ defmodule OpentelemetryChTest do
       end)
 
     assert_receive {:span,
-                    span(name: "SELECT " <> @database, end_time: end_time, attributes: attributes)}
+                    span(name: "SELECT numbers", end_time: end_time, attributes: attributes)}
 
     assert end_time > last_row_at
     assert %{"db.response.returned_rows": 5} = :otel_attributes.map(attributes)
-    refute_receive {:span, span(name: "SELECT " <> @database)}
+    refute_receive {:span, span(name: "SELECT numbers")}
   end
 
   test "a streamed insert is one span named after its table", %{conn: conn} do
@@ -137,7 +137,7 @@ defmodule OpentelemetryChTest do
     end
 
     assert_receive {:span, span(name: "parent", span_id: parent_span_id)}
-    assert_receive {:span, span(name: "SELECT " <> @database, parent_span_id: ^parent_span_id)}
+    assert_receive {:span, span(name: "SELECT", parent_span_id: ^parent_span_id)}
   end
 
   test "a failed query fails its span with the ClickHouse error code", %{conn: conn} do
@@ -147,7 +147,7 @@ defmodule OpentelemetryChTest do
 
     assert_receive {:span,
                     span(
-                      name: "SELECT " <> @database,
+                      name: "SELECT missing",
                       status: {:status, :error, "60"},
                       attributes: attributes
                     )}
@@ -179,7 +179,7 @@ defmodule OpentelemetryChTest do
 
     assert_receive {:span,
                     span(
-                      name: "INSERT " <> @database,
+                      name: "INSERT events",
                       status: {:status, :error, "ArgumentError"},
                       events: events
                     )}
@@ -210,7 +210,7 @@ defmodule OpentelemetryChTest do
 
     assert_receive {:span,
                     span(
-                      name: "SELECT " <> @database,
+                      name: "SELECT numbers",
                       status: {:status, :error, "DBConnection.ConnectionError"}
                     )},
                    1_000
@@ -233,7 +233,7 @@ defmodule OpentelemetryChTest do
 
     assert_receive {:span,
                     span(
-                      name: "SELECT " <> @database,
+                      name: "SELECT",
                       status: {:status, :error, "_OTHER"},
                       start_time: start_time,
                       end_time: end_time,
@@ -301,7 +301,7 @@ defmodule OpentelemetryChTest do
                        "db.system.name": :clickhouse,
                        "db.namespace": @database,
                        "db.collection.name": "events",
-                       "db.operation.name": "SELECT"
+                       "db.query.summary": "SELECT events"
                      }
                    ),
                    &1

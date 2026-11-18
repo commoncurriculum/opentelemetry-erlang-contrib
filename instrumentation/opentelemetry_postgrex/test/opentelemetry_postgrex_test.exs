@@ -39,7 +39,7 @@ defmodule OpentelemetryPostgrexTest do
     :ok
   end
 
-  test "a query is a client span named after its operation and database, under the current span",
+  test "a query is a client span named after its summary, under the current span",
        %{conn: conn, hostname: hostname} do
     OpentelemetryPostgrex.setup()
 
@@ -51,7 +51,7 @@ defmodule OpentelemetryPostgrexTest do
 
     assert_receive {:span,
                     span(
-                      name: "SELECT " <> @database,
+                      name: "SELECT",
                       kind: :client,
                       parent_span_id: ^parent_span_id,
                       start_time: start_time,
@@ -65,7 +65,7 @@ defmodule OpentelemetryPostgrexTest do
     assert :otel_attributes.map(attributes) == %{
              "db.system.name": :postgresql,
              "db.namespace": @database,
-             "db.operation.name": "SELECT",
+             "db.query.summary": "SELECT",
              "db.query.text": "SELECT $1::int",
              "db.response.returned_rows": 1,
              "server.address": hostname
@@ -85,30 +85,33 @@ defmodule OpentelemetryPostgrexTest do
     OpentelemetryPostgrex.setup()
 
     Postgrex.query!(conn, "INSERT INTO otel_events VALUES ($1)", ["Ada"])
-    assert_receive {:span, span(name: "INSERT " <> @database, attributes: attributes)}
+    assert_receive {:span, span(name: "INSERT otel_events", attributes: attributes)}
     refute Map.has_key?(:otel_attributes.map(attributes), :"db.response.returned_rows")
 
     Postgrex.query!(conn, "INSERT INTO otel_events VALUES ($1) RETURNING name", ["Ada"])
-    assert_receive {:span, span(name: "INSERT " <> @database, attributes: attributes)}
+    assert_receive {:span, span(name: "INSERT otel_events", attributes: attributes)}
     assert %{"db.response.returned_rows": 1} = :otel_attributes.map(attributes)
   end
 
-  test "the operation name is the statement's first keyword as written, except WITH",
+  test "the summary names every operation and table, and the source is the collection only when the statement names one table",
        %{conn: conn} do
     OpentelemetryPostgrex.setup()
 
-    Postgrex.query!(conn, "select 1", [])
-    assert_receive {:span, span(name: "select " <> @database, attributes: attributes)}
-    assert %{"db.operation.name": "select"} = :otel_attributes.map(attributes)
+    Postgrex.query!(conn, "with t as (select 1) select * from t", [], source: "t")
+    assert_receive {:span, span(name: "SELECT SELECT t", attributes: attributes)}
+    attributes = :otel_attributes.map(attributes)
+    assert %{"db.query.summary": "SELECT SELECT t", "db.collection.name": "t"} = attributes
+    refute Map.has_key?(attributes, :"db.operation.name")
 
-    Enum.each(
-      ["WITH t AS (SELECT 1) SELECT * FROM t", "with t as (select 1) select * from t"],
-      fn statement ->
-        Postgrex.query!(conn, statement, [], source: "t")
-        assert_receive {:span, span(name: "t", attributes: attributes)}
-        refute Map.has_key?(:otel_attributes.map(attributes), :"db.operation.name")
-      end
+    Postgrex.query!(
+      conn,
+      "SELECT e.name FROM otel_events e JOIN pg_tables p ON e.name = p.tablename",
+      [],
+      source: "otel_events"
     )
+
+    assert_receive {:span, span(name: "SELECT otel_events pg_tables", attributes: attributes)}
+    refute Map.has_key?(:otel_attributes.map(attributes), :"db.collection.name")
   end
 
   test "a transaction's BEGIN and COMMIT are spans", %{conn: conn} do
@@ -116,9 +119,9 @@ defmodule OpentelemetryPostgrexTest do
 
     Postgrex.transaction(conn, &Postgrex.query!(&1, "SELECT 1", []))
 
-    assert_receive {:span, span(name: "BEGIN " <> @database)}
-    assert_receive {:span, span(name: "SELECT " <> @database)}
-    assert_receive {:span, span(name: "COMMIT " <> @database)}
+    assert_receive {:span, span(name: "BEGIN")}
+    assert_receive {:span, span(name: "SELECT")}
+    assert_receive {:span, span(name: "COMMIT")}
   end
 
   test "each round trip of a stream is its own span", %{conn: conn} do
@@ -130,7 +133,7 @@ defmodule OpentelemetryPostgrexTest do
     end)
 
     returned_rows =
-      for {:span, span(name: "SELECT " <> @database, attributes: attributes)} <- spans(),
+      for {:span, span(name: "SELECT generate_series", attributes: attributes)} <- spans(),
           rows = :otel_attributes.map(attributes)[:"db.response.returned_rows"],
           do: rows
 
@@ -153,7 +156,7 @@ defmodule OpentelemetryPostgrexTest do
     end
 
     assert_receive {:span, span(name: "parent", span_id: parent_span_id)}
-    assert_receive {:span, span(name: "SELECT " <> @database, parent_span_id: ^parent_span_id)}
+    assert_receive {:span, span(name: "SELECT", parent_span_id: ^parent_span_id)}
   end
 
   test "a failed query fails its span with the SQLSTATE code", %{conn: conn} do
@@ -163,7 +166,7 @@ defmodule OpentelemetryPostgrexTest do
 
     assert_receive {:span,
                     span(
-                      name: "SELECT " <> @database,
+                      name: "SELECT otel_missing",
                       status: {:status, :error, "42P01"},
                       attributes: attributes
                     )}
@@ -204,7 +207,7 @@ defmodule OpentelemetryPostgrexTest do
 
     assert_receive {:span,
                     span(
-                      name: "SELECT " <> @database,
+                      name: "SELECT",
                       status: {:status, :error, "_OTHER"}
                     )},
                    500
@@ -273,8 +276,7 @@ defmodule OpentelemetryPostgrexTest do
       Process.sleep(100)
       Process.exit(caller, :kill)
 
-      assert_receive {:span,
-                      span(name: "SELECT " <> @database, status: {:status, :error, "_OTHER"})},
+      assert_receive {:span, span(name: "SELECT", status: {:status, :error, "_OTHER"})},
                      500
 
       Postgrex.query!(conn, "SELECT 1", [])
@@ -315,7 +317,7 @@ defmodule OpentelemetryPostgrexTest do
                        "db.system.name": :postgresql,
                        "db.namespace": @database,
                        "db.collection.name": "otel_events",
-                       "db.operation.name": "SELECT"
+                       "db.query.summary": "SELECT otel_events"
                      }
                    ),
                    &1

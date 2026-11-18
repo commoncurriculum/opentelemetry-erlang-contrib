@@ -55,7 +55,7 @@ defmodule OpentelemetryCh.MixProject do
       {:opentelemetry_process_propagator, "~> 0.3"},
       {:opentelemetry_telemetry,
        github: "commoncurriculum/opentelemetry-erlang-contrib",
-       ref: "00647fbbe443340abda4b5776800c47c542f30ea",
+       ref: "9916db8432f38d2db163e8f2ad1ebe8e476ce179",
        sparse: "utilities/opentelemetry_telemetry"},
       {:opentelemetry_semantic_conventions, "~> 1.27"},
       {:telemetry, "~> 0.4 or ~> 1.0"}
