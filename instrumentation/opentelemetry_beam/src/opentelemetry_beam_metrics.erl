@@ -230,7 +230,7 @@ setup(Meter, Opts) ->
                       {WallclockTime, _} = erlang:statistics(wall_clock),
 
                       [{Runtime / 1.0e3, #{'beam.process.cpu.state' => user}},
-                       {WallclockTime / 1.0e3, #{'process.cpu.state' => wall}}]
+                       {WallclockTime / 1.0e3, #{'beam.process.cpu.state' => wall}}]
               end, [],
               #{description => <<"The sum of the runtime for all threads "
                                  "in the Erlang runtime system. "
@@ -259,6 +259,26 @@ setup(Meter, Opts) ->
       wordsize, Meter, 'beam.system.wordsize',
       #{description => <<"The size of Erlang term words in bytes.">>,
         unit => 'By'}),
+
+    otel_meter:create_observable_updowncounter(
+      Meter, 'beam.node.count',
+      fun(_) -> [{length(nodes()) + 1, #{}}] end, [],
+      #{description => <<"Nodes in this node's cluster, itself included.">>,
+        unit => '{node}'}),
+
+    otel_meter:create_observable_gauge(
+      Meter, 'beam.process.message_queue_len.max',
+      fun message_queue_len_max/1, [],
+      #{description => <<"The longest message queue of any process, with that "
+                         "process's registered name and initial call.">>,
+        unit => '{message}'}),
+
+    otel_meter:create_observable_gauge(
+      Meter, 'beam.scheduler.utilization',
+      fun(_) -> [{opentelemetry_beam_scheduler:utilization(), #{}}] end, [],
+      #{description => <<"Share of time the normal and dirty CPU schedulers spent "
+                         "working since the previous observation.">>,
+        unit => '1'}),
 
     ok.
 
@@ -435,20 +455,49 @@ vm_memory_gauges(_) ->
     Data = erlang:memory(),
 
     [{'beam.memory.atoms',
-      [{?gv(atom_used, Data), #{usage => used}},
-       {?gv(atom, Data) - ?gv(atom_used, Data), #{usage => free}}]},
+      [{?gv(atom_used, Data), #{'beam.memory.state' => used}},
+       {?gv(atom, Data) - ?gv(atom_used, Data), #{'beam.memory.state' => free}}]},
      {'beam.memory.allocated',
-      [{?gv(system, Data), #{kind => system}},
-       {?gv(processes, Data), #{kind => processes}}]},
+      [{?gv(system, Data), #{'beam.memory.type' => system}},
+       {?gv(processes, Data), #{'beam.memory.type' => processes}}]},
      {'beam.memory.processes',
-      [{?gv(processes_used, Data), #{usage => used}},
-       {?gv(processes, Data) - ?gv(processes_used, Data), #{usage => free}}]},
+      [{?gv(processes_used, Data), #{'beam.memory.state' => used}},
+       {?gv(processes, Data) - ?gv(processes_used, Data), #{'beam.memory.state' => free}}]},
      {'beam.memory.system',
-      [{?gv(atom, Data), #{usage => atom}},
-       {?gv(binary, Data), #{usage => binary}},
-       {?gv(code, Data), #{usage => code}},
-       {?gv(ets, Data), #{usage => ets}},
-       {memory_other(Data), #{usage => other}}]}].
+      [{?gv(atom, Data), #{'beam.memory.type' => atom}},
+       {?gv(binary, Data), #{'beam.memory.type' => binary}},
+       {?gv(code, Data), #{'beam.memory.type' => code}},
+       {?gv(ets, Data), #{'beam.memory.type' => ets}},
+       {memory_other(Data), #{'beam.memory.type' => other}}]}].
+
+message_queue_len_max(_) ->
+    {Length, Longest} =
+        lists:foldl(
+          fun(Pid, {Max, _} = Acc) ->
+                  case erlang:process_info(Pid, message_queue_len) of
+                      {message_queue_len, Len} when Len > Max -> {Len, Pid};
+                      _ -> Acc
+                  end
+          end, {0, undefined}, erlang:processes()),
+    [{Length, process_attributes(Longest)}].
+
+process_attributes(undefined) ->
+    #{};
+process_attributes(Pid) ->
+    case erlang:process_info(Pid, [registered_name, initial_call, dictionary]) of
+        [{registered_name, Name}, {initial_call, InitialCall}, {dictionary, Dictionary}] ->
+            %% proc_lib processes all start in proc_lib:init_p/5 and keep their real
+            %% initial call in the process dictionary.
+            {M, F, A} = proplists:get_value('$initial_call', Dictionary, InitialCall),
+            Attributes = #{'beam.process.initial_call' =>
+                               iolist_to_binary(io_lib:format("~ts:~ts/~b", [M, F, A]))},
+            case Name of
+                [] -> Attributes;
+                _ -> Attributes#{'beam.process.registered_name' => atom_to_binary(Name)}
+            end;
+        undefined ->
+            #{}
+    end.
 
 vm_msacc_counters(_) ->
     SecondAsPerfCounter = erlang:convert_time_unit(1, second, perf_counter),

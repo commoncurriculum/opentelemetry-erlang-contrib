@@ -73,6 +73,11 @@ opentelemetry_broadway:
       - any-glob-to-any-file:
           - instrumentation/opentelemetry_broadway/**/*
 
+opentelemetry_beam:
+  - changed-files:
+      - any-glob-to-any-file:
+          - instrumentation/opentelemetry_beam/**/*
+
 opentelemetry_cowboy:
   - changed-files:
       - any-glob-to-any-file:

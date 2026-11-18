@@ -4,6 +4,10 @@ Metrics collector to export statistics from the BEAM VM.
 
 The metrics and their names are heavily borrowed from [prometheus.erl](https://github.com/deadtrickster/prometheus.erl).
 
+It also reports `beam.node.count`, `beam.process.message_queue_len.max` (with the process's
+`beam.process.registered_name` and `beam.process.initial_call`) and
+`beam.scheduler.utilization`.
+
 After installing, setup the desired metrics in your application behaviour before your
 top-level supervisor starts. Make sure the API and SDK applications are started before
 your application.
