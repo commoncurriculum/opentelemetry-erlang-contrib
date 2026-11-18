@@ -1,6 +1,6 @@
 -module(otel_db_query_text).
 
--export([sql/2, truncate/1, summary/1]).
+-export([attributes/3, sql/2, truncate/1, summary/1]).
 
 -define(MAX_BYTES, 2048).
 
@@ -20,6 +20,26 @@
         "|0[xX][0-9A-Fa-f]+"
         "|(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?"
         ")").
+
+%% A SQL statement's attributes for the span and its duration measurement: db.query.summary, and
+%% db.collection.name from Source only when the statement names at most one table; and for the
+%% span alone db.query.text, as Mode says.
+-spec attributes(iodata(), binary() | nil | undefined, disabled | plain | obfuscated) ->
+    {map(), map()}.
+attributes(Statement, Source, Mode) ->
+    {Summary, Tables} = summary(Statement),
+    Attributes = maybe_put('db.query.summary', Summary, #{}),
+    {case Tables of
+         [_, _ | _] -> Attributes;
+         _ -> maybe_put('db.collection.name', Source, Attributes)
+     end,
+     case Mode of
+         disabled -> #{};
+         _ -> #{'db.query.text' => sql(Statement, Mode)}
+     end}.
+
+maybe_put(_Key, Value, Map) when Value =:= undefined; Value =:= nil -> Map;
+maybe_put(Key, Value, Map) -> Map#{Key => Value}.
 
 -spec sql(iodata(), plain | obfuscated) -> binary().
 sql(Statement, plain) ->

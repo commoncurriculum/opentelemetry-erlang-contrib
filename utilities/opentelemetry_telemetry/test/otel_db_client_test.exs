@@ -11,9 +11,12 @@ defmodule OtelDbClientTest do
   @events [[:otel_db_client_test, :start], [:otel_db_client_test, :stop]]
 
   def handle([:otel_db_client_test, :start], _measurements, metadata, _config) do
-    :otel_db_client.start(__MODULE__, metadata.ref, "SELECT users", %{"db.system.name": :test}, %{
-      "db.query.text": "SELECT ?"
-    })
+    :otel_db_client.start(
+      __MODULE__,
+      metadata.ref,
+      %{"db.system.name": :test, "db.query.summary": "SELECT users"},
+      %{"db.query.text": "SELECT ?"}
+    )
   end
 
   def handle([:otel_db_client_test, :stop], %{duration: duration}, metadata, _config) do
@@ -33,7 +36,7 @@ defmodule OtelDbClientTest do
 
     :telemetry.execute([:otel_db_client_test, :stop], %{duration: 1_000}, %{
       ref: ref,
-      finish: fn _span -> {%{"db.response.returned_rows": 2}, %{"error.type": "42P01"}} end
+      finish: fn _span -> {%{"error.type": "42P01"}, %{"db.response.returned_rows": 2}} end
     })
 
     assert_receive {:span,
@@ -69,5 +72,41 @@ defmodule OtelDbClientTest do
     assert log =~ "boom"
     assert_receive {:span, span(name: "SELECT users")}
     assert Enum.any?(:telemetry.list_handlers([:otel_db_client_test]), &(&1.id == __MODULE__))
+  end
+
+  test "attributes known at the stop rename the span and go on it" do
+    ref = make_ref()
+
+    :otel_db_client.start(
+      __MODULE__,
+      ref,
+      %{"db.system.name": :test, "db.operation.name": "ping"},
+      %{}
+    )
+
+    :otel_db_client.stop(ref, 1_000, fn _span -> {%{"db.namespace": "app"}, %{}} end)
+
+    assert_receive {:span, span(name: "ping app", attributes: attributes)}
+    assert %{"db.namespace": "app"} = :otel_attributes.map(attributes)
+  end
+
+  test "a span is named after its summary, else its operation and target, else its system" do
+    assert :otel_db_client.span_name(%{
+             "db.system.name": :test,
+             "db.query.summary": "SELECT users",
+             "db.operation.name": "find"
+           }) == "SELECT users"
+
+    for {attributes, name} <- [
+          {%{"db.operation.name": "find", "db.collection.name": "users", "db.namespace": "app"},
+           "find users"},
+          {%{"db.operation.name": "ping", "db.namespace": "app"}, "ping app"},
+          {%{"db.operation.name": "ping", "server.address": "db", "server.port": 1}, "ping db:1"},
+          {%{"db.operation.name": "ping"}, "ping"},
+          {%{"db.namespace": "app"}, "app"},
+          {%{}, "test"}
+        ] do
+      assert :otel_db_client.span_name(Map.put(attributes, :"db.system.name", :test)) == name
+    end
   end
 end
