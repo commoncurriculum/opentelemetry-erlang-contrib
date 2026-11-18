@@ -28,6 +28,8 @@ defmodule OpentelemetryPostgrex do
     * `db.collection.name` - the one table the statement names, as written there with any database
       prefix, else the query's `:source` option, which Ecto sets; left out when the statement names
       more than one table
+    * `db.operation.name` - the command the server reported it ran, such as `INSERT`; left out when
+      it reported none
     * `db.query.summary` - each operation of the statement followed by the tables it names, such
       as `SELECT users` or `INSERT orders SELECT carts`
     * `db.query.text` - the statement, as the `:db_query_text` option says
@@ -115,8 +117,12 @@ defmodule OpentelemetryPostgrex do
 
   def handle([:postgrex, :query, :stop], %{duration: duration}, metadata, _config) do
     :otel_db_client.stop(metadata.telemetry_span_context, duration, fn _span ->
-      {error_attributes(metadata.error),
-       maybe_put(%{}, :"db.response.returned_rows", metadata.returned_rows)}
+      {metadata.error
+       |> error_attributes()
+       |> maybe_put(
+         DBAttributes.db_operation_name(),
+         :otel_db_client.operation_name(metadata.command)
+       ), maybe_put(%{}, :"db.response.returned_rows", metadata.returned_rows)}
     end)
   end
 
@@ -167,6 +173,6 @@ defmodule OpentelemetryPostgrex do
   defp error_attributes(%module{}), do: %{ErrorAttributes.error_type() => inspect(module)}
   defp error_attributes(_error), do: %{ErrorAttributes.error_type() => "_OTHER"}
 
-  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, _key, value) when value in [nil, :undefined], do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

@@ -52,7 +52,7 @@ defmodule OpentelemetryDBConnection.MixProject do
        only: [:dev, :test]},
       {:postgrex,
        github: "commoncurriculum/postgrex",
-       ref: "b1aadc53ead8956752d8aae2967904db2ea5c9af",
+       ref: "b5b02aee1361d709c05a2072e409c49778344e03",
        only: [:dev, :test]},
       {:opentelemetry, "== 1.7.0", only: [:dev, :test]},
       {:opentelemetry_exporter, "== 1.11.0", only: [:dev, :test]},
