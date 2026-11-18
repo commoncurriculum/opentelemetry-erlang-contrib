@@ -8,6 +8,7 @@
 -include_lib("opentelemetry_api/include/opentelemetry.hrl").
 -include_lib("opentelemetry/include/otel_span.hrl").
 -include_lib("opentelemetry_api/include/otel_tracer.hrl").
+-include_lib("opentelemetry_experimental/include/otel_metrics.hrl").
 
 -include_lib("opentelemetry_semantic_conventions/include/attributes/client_attributes.hrl").
 -include_lib("opentelemetry_semantic_conventions/include/attributes/error_attributes.hrl").
@@ -32,11 +33,19 @@ all() ->
         idle_timeout_request,
         chunk_timeout_request,
         bad_request,
-        binary_status_code_request
+        binary_status_code_request,
+        active_requests_metric
     ].
 
 init_per_suite(Config) ->
     ok = application:load(opentelemetry),
+    application:set_env(opentelemetry, processors, [{otel_batch_processor, #{scheduled_delay_ms => 1}}]),
+    application:set_env(opentelemetry_experimental, readers, [
+        #{module => otel_metric_reader,
+          config => #{exporter => {otel_metric_exporter_pid, ?MODULE},
+                      default_temporality_mapping => #{updown_counter => temporality_cumulative}}}
+    ]),
+    {ok, _} = application:ensure_all_started(opentelemetry_experimental),
     {ok,_} = application:ensure_all_started(ranch),
     Dispatch = cowboy_router:compile([{"localhost", [
                                       {"/success", test_h, success},
@@ -56,6 +65,7 @@ init_per_suite(Config) ->
     Config.
 
 end_per_suite(_Config) ->
+    application:stop(opentelemetry_experimental),
     application:unload(opentelemetry),
     application:stop(ranch),
     application:stop(telemetry).
@@ -524,4 +534,69 @@ binary_status_code_request(_Config) ->
             ?assertMatch(ExpectedAttrs, otel_attributes:map(Attributes))
     after
         1000 -> ct:fail(binary_status_code_request)
+    end.
+
+active_requests_metric(_Config) ->
+    register(?MODULE, self()),
+    opentelemetry_cowboy:setup(),
+    Attrs = #{?HTTP_REQUEST_METHOD => 'GET', ?URL_SCHEME => http},
+    Parent = self(),
+    spawn_link(fun() ->
+        Parent ! {slow_response, httpc:request(get, {"http://localhost:8080/slow", []}, [], [{socket_opts, [{port, 62680}]}])}
+    end),
+    timer:sleep(100),
+    ?assertEqual(1, await_active_requests(1, Attrs)),
+    receive
+        {slow_response, _IdleTimeout} -> ok
+    after
+        2000 -> ct:fail(slow_request)
+    end,
+    ?assertEqual(0, await_active_requests(0, Attrs)),
+    {ok, {{_, 500, _}, _, _}} =
+        httpc:request(get, {"http://localhost:8080/failure", []}, [], [{socket_opts, [{port, 62681}]}]),
+    ?assertEqual(0, await_active_requests(0, Attrs)),
+    {ok, {{_, 501, _}, _, _}} =
+        httpc:request(trace, {"http://localhost:8080/", []}, [], [{socket_opts, [{port, 62682}]}]),
+    ?assertEqual(0, await_active_requests(0, Attrs)),
+    ?assertEqual([], [A || #{?HTTP_REQUEST_METHOD := 'TRACE'} = A <- active_requests_attributes()]).
+
+active_requests_attributes() ->
+    flush_metrics(),
+    otel_meter_server:force_flush(),
+    receive
+        {otel_metric, #metric{name = 'http.server.active_requests', data = #sum{datapoints = Datapoints}}} ->
+            [A || #datapoint{attributes = A} <- Datapoints]
+    after
+        1000 -> ct:fail(no_active_requests_metric)
+    end.
+
+active_requests(Attrs) ->
+    flush_metrics(),
+    otel_meter_server:force_flush(),
+    receive
+        {otel_metric, #metric{name = 'http.server.active_requests', unit = '{request}',
+                              data = #sum{is_monotonic = false, datapoints = Datapoints}}} ->
+            [Value] = [V || #datapoint{attributes = A, value = V} <- Datapoints, A =:= Attrs],
+            Value
+    after
+        1000 -> ct:fail(no_active_requests_metric)
+    end.
+
+flush_metrics() ->
+    receive
+        {otel_metric, _} -> flush_metrics()
+    after
+        0 -> ok
+    end.
+
+%% Cowboy emits the stop event after the response reaches the client.
+await_active_requests(Expected, Attrs) ->
+    await_active_requests(Expected, Attrs, 50).
+
+await_active_requests(_Expected, Attrs, 0) ->
+    active_requests(Attrs);
+await_active_requests(Expected, Attrs, Tries) ->
+    case active_requests(Attrs) of
+        Expected -> Expected;
+        _ -> timer:sleep(20), await_active_requests(Expected, Attrs, Tries - 1)
     end.
