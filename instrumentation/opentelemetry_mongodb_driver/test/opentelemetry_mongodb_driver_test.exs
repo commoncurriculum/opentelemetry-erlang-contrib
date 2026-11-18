@@ -129,7 +129,7 @@ defmodule OpentelemetryMongodbDriverTest do
 
     assert_receive {:span,
                     span(
-                      name: "bogusCommand " <> @database,
+                      name: "BOGUS_COMMAND " <> @database,
                       status: {:status, :error, "59"},
                       attributes: attributes
                     )}
@@ -205,7 +205,7 @@ defmodule OpentelemetryMongodbDriverTest do
     end
 
     assert_receive {:span, span(name: "parent", span_id: parent_span_id)}
-    assert_receive {:span, span(name: "abortTransaction admin", parent_span_id: ^parent_span_id)}
+    assert_receive {:span, span(name: "ABORT_TRANSACTION admin", parent_span_id: ^parent_span_id)}
   end
 
   describe "db.query.text" do
