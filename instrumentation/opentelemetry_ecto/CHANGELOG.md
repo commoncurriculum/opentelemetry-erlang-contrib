@@ -15,6 +15,7 @@
 
 - A failed query's status message and `exception.message` are its `error.type`, never the error's own message, which can quote row values. An exception with no database error code reports its module as `error.type` (e.g. `Exqlite.Error`), an atom reason reports itself, and any other reason reports `_OTHER`
 - Queries without a source are named `{operation} {db.namespace}` instead of ending in a blank target
+- The operation is read case-insensitively from the statement's first word, so Ecto's own `begin`, `commit` and `rollback` are `BEGIN`, `COMMIT` and `ROLLBACK`. A statement whose operation isn't known gets no `db.operation.name` and is named after its target, instead of `UNKNOWN`
 - A repo configured without `:database` (allowed by `ecto_ch`) is traced without `db.namespace` instead of crashing the handler, which detached it
 
 ## 2.0.0-beta.1

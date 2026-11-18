@@ -411,51 +411,21 @@ defmodule OpentelemetryEcto do
     }
   end
 
-  defp set_db_operation_name(attributes, query, :ecto_sql_query) do
-    Map.put(attributes, unquote(DBAttributes.db_operation_name()), extract_sql_command(query))
+  @sql_commands Map.new(
+                  ~w(SELECT INSERT UPDATE DELETE WITH BEGIN COMMIT ROLLBACK CREATE ALTER DROP TRUNCATE USE SHOW DESCRIBE EXPLAIN SET GRANT REVOKE SAVEPOINT RELEASE PREPARE EXECUTE DEALLOCATE CALL FETCH DECLARE CLOSE DISCARD LISTEN NOTIFY REINDEX VACUUM CLUSTER COPY ANALYZE),
+                  &{&1, String.to_atom(&1)}
+                )
+
+  defp set_db_operation_name(attributes, query, :ecto_sql_query) when is_binary(query) do
+    command = query |> String.split(~r/\s/, parts: 2, trim: true) |> List.first("") |> String.upcase()
+
+    case Map.fetch(@sql_commands, command) do
+      {:ok, operation} -> Map.put(attributes, unquote(DBAttributes.db_operation_name()), operation)
+      :error -> attributes
+    end
   end
 
   defp set_db_operation_name(attributes, _, _), do: attributes
-
-  defp extract_sql_command("SELECT " <> _rest), do: :SELECT
-  defp extract_sql_command("INSERT " <> _rest), do: :INSERT
-  defp extract_sql_command("UPDATE " <> _rest), do: :UPDATE
-  defp extract_sql_command("DELETE " <> _rest), do: :DELETE
-  defp extract_sql_command("WITH " <> _rest), do: :WITH
-  defp extract_sql_command("BEGIN " <> _rest), do: :BEGIN
-  defp extract_sql_command("COMMIT " <> _rest), do: :COMMIT
-  defp extract_sql_command("ROLLBACK " <> _rest), do: :ROLLBACK
-  defp extract_sql_command("CREATE " <> _rest), do: :CREATE
-  defp extract_sql_command("ALTER " <> _rest), do: :ALTER
-  defp extract_sql_command("DROP " <> _rest), do: :DROP
-  defp extract_sql_command("TRUNCATE " <> _rest), do: :TRUNCATE
-  defp extract_sql_command("USE " <> _rest), do: :USE
-  defp extract_sql_command("SHOW " <> _rest), do: :SHOW
-  defp extract_sql_command("DESCRIBE " <> _rest), do: :DESCRIBE
-  defp extract_sql_command("EXPLAIN " <> _rest), do: :EXPLAIN
-  defp extract_sql_command("SET " <> _rest), do: :SET
-  defp extract_sql_command("GRANT " <> _rest), do: :GRANT
-  defp extract_sql_command("REVOKE " <> _rest), do: :REVOKE
-  defp extract_sql_command("SAVEPOINT " <> _rest), do: :SAVEPOINT
-  defp extract_sql_command("RELEASE " <> _rest), do: :RELEASE
-  defp extract_sql_command("PREPARE " <> _rest), do: :PREPARE
-  defp extract_sql_command("EXECUTE " <> _rest), do: :EXECUTE
-  defp extract_sql_command("DEALLOCATE " <> _rest), do: :DEALLOCATE
-  defp extract_sql_command("CALL " <> _rest), do: :CALL
-  defp extract_sql_command("FETCH " <> _rest), do: :FETCH
-  defp extract_sql_command("DECLARE " <> _rest), do: :DECLARE
-  defp extract_sql_command("CLOSE " <> _rest), do: :CLOSE
-  defp extract_sql_command("DISCARD " <> _rest), do: :DISCARD
-  defp extract_sql_command("LISTEN " <> _rest), do: :LISTEN
-  defp extract_sql_command("NOTIFY " <> _rest), do: :NOTIFY
-  defp extract_sql_command("REINDEX " <> _rest), do: :REINDEX
-  defp extract_sql_command("VACUUM " <> _rest), do: :VACUUM
-  defp extract_sql_command("CLUSTER " <> _rest), do: :CLUSTER
-  defp extract_sql_command("COPY " <> _rest), do: :COPY
-  defp extract_sql_command("ANALYZE " <> _rest), do: :ANALYZE
-
-  # Fallback clause for unrecognized commands
-  defp extract_sql_command(_query), do: :UNKNOWN
 
   defp maybe_add_error_type(attributes, {:ok, _}), do: attributes
 

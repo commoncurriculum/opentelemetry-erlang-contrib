@@ -356,6 +356,32 @@ defmodule OpentelemetryEctoTest do
     assert_receive {:span, span(name: "SELECT opentelemetry_ecto_test", kind: :client)}
   end
 
+  test "a lowercase statement is named after its operation" do
+    setup_instrumentation()
+
+    Repo.query!("select 1")
+
+    assert_receive {:span, span(name: "SELECT opentelemetry_ecto_test", kind: :client)}
+  end
+
+  test "a transaction's begin and commit are named after their operations" do
+    setup_instrumentation()
+
+    Repo.transaction(fn -> Repo.all(User) end)
+
+    assert_receive {:span, span(name: "BEGIN opentelemetry_ecto_test", kind: :client)}
+    assert_receive {:span, span(name: "COMMIT opentelemetry_ecto_test", kind: :client)}
+  end
+
+  test "a statement whose operation isn't known is named after its database, without an operation" do
+    setup_instrumentation()
+
+    Repo.query!("VALUES (1)")
+
+    assert_receive {:span, span(name: "opentelemetry_ecto_test", attributes: attributes, kind: :client)}
+    refute Map.has_key?(:otel_attributes.map(attributes), DBAttributes.db_operation_name())
+  end
+
   test "captures basic query events - clickhouse" do
     setup_instrumentation(event_prefix: [:opentelemetry_ecto, :clickhouse_test_repo])
 
