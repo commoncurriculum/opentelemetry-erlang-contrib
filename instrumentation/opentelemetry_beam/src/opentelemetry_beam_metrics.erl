@@ -268,10 +268,17 @@ setup(Meter, Opts) ->
 
     otel_meter:create_observable_gauge(
       Meter, 'beam.process.message_queue_len.max',
-      fun message_queue_len_max/1, [],
+      fun(_) -> process_max(message_queue_len) end, [],
       #{description => <<"The longest message queue of any process, with that "
                          "process's registered name and initial call.">>,
         unit => '{message}'}),
+
+    otel_meter:create_observable_gauge(
+      Meter, 'beam.process.memory.max',
+      fun(_) -> process_max(memory) end, [],
+      #{description => <<"The memory of the largest process, with that "
+                         "process's registered name and initial call.">>,
+        unit => 'By'}),
 
     otel_meter:create_observable_gauge(
       Meter, 'beam.scheduler.utilization',
@@ -470,16 +477,16 @@ vm_memory_gauges(_) ->
        {?gv(ets, Data), #{'beam.memory.type' => ets}},
        {memory_other(Data), #{'beam.memory.type' => other}}]}].
 
-message_queue_len_max(_) ->
-    {Length, Longest} =
+process_max(Item) ->
+    {Value, Largest} =
         lists:foldl(
           fun(Pid, {Max, _} = Acc) ->
-                  case erlang:process_info(Pid, message_queue_len) of
-                      {message_queue_len, Len} when Len > Max -> {Len, Pid};
+                  case erlang:process_info(Pid, Item) of
+                      {Item, V} when V > Max -> {V, Pid};
                       _ -> Acc
                   end
           end, {0, undefined}, erlang:processes()),
-    [{Length, process_attributes(Longest)}].
+    [{Value, process_attributes(Largest)}].
 
 process_attributes(undefined) ->
     #{};
