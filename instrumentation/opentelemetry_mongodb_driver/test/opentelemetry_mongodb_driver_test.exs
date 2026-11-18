@@ -214,17 +214,33 @@ defmodule OpentelemetryMongodbDriverTest do
                Jason.decode!(text)
     end
 
-    test "keeps only the first item of each list when obfuscated", %{conn: conn} do
+    test "keeps every key of every list item when obfuscated", %{conn: conn} do
       OpentelemetryMongodbDriver.setup(db_query_text: :obfuscated)
 
       {:ok, _} =
-        Mongo.insert_many(conn, "users", [%{name: "Ada", tags: ["a", "b"]}, %{name: "Grace"}])
+        Mongo.insert_many(conn, "users", [%{name: "Ada", tags: ["a", "b"]}, %{born: 1906}])
 
       assert_receive {:span, span(name: "insert users", attributes: attributes)}
       assert %{"db.query.text": text} = :otel_attributes.map(attributes)
 
-      assert %{"insert" => "users", "documents" => [%{"name" => "?", "tags" => ["?"]}]} =
-               Jason.decode!(text)
+      assert %{
+               "insert" => "users",
+               "documents" => [%{"name" => "?", "tags" => ["?", "?"]}, %{"born" => "?"}]
+             } = Jason.decode!(text)
+    end
+
+    test "stops building the obfuscated text at 2048 bytes", %{conn: conn} do
+      OpentelemetryMongodbDriver.setup(db_query_text: :obfuscated)
+
+      documents = for i <- 1..20_000, do: %{i: i, name: "user #{i}"}
+      {:ok, _} = Mongo.insert_many(conn, "users", documents)
+
+      assert_receive {:span, span(name: "insert users", attributes: attributes)}
+
+      assert %{"db.query.text": ~s({"insert":"users",) <> _ = text} =
+               :otel_attributes.map(attributes)
+
+      assert byte_size(text) in 2000..2048
     end
 
     test "is cut to its first 2048 bytes", %{conn: conn} do

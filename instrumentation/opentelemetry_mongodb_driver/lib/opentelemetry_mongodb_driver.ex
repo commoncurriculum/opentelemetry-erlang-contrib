@@ -57,6 +57,8 @@ defmodule OpentelemetryMongodbDriver do
     [:mongodb_driver, :command, :exception]
   ]
 
+  @max_query_text_bytes 2048
+
   @metric_attributes [
     :"db.system.name",
     DBAttributes.db_namespace(),
@@ -76,11 +78,11 @@ defmodule OpentelemetryMongodbDriver do
                       Whether to record the command as `db.query.text`:
 
                         * `:disabled` - leave it out
-                        * `:obfuscated` - record it with the command and its collection, every
-                          other value replaced by `?` and every list cut to its first item
+                        * `:obfuscated` - record it with the command, its collection and every
+                          key, and every other value replaced by `?`
                         * `:plain` - record it as it is, values included
 
-                      Recorded text is cut to its first 2048 bytes.
+                      Recorded text is built only up to its first 2048 bytes.
                       """
                     ]
                   )
@@ -285,37 +287,62 @@ defmodule OpentelemetryMongodbDriver do
     _error -> nil
   end
 
-  defp command_text(command, %{db_query_text: :plain}),
-    do: command |> encodable() |> Jason.encode!() |> :otel_db_query_text.truncate()
+  defp command_text([{operation, target} | arguments], %{db_query_text: mode}) do
+    {text, _budget} =
+      object([{operation, {:plain, target}} | arguments], mode, @max_query_text_bytes)
 
-  defp command_text([{operation, target} | arguments], %{db_query_text: :obfuscated}) do
-    [
-      {operation, plain(target)}
-      | Enum.map(arguments, fn {key, value} -> {key, obfuscate(value)} end)
-    ]
-    |> Jason.OrderedObject.new()
-    |> Jason.encode!()
-    |> :otel_db_query_text.truncate()
+    text |> IO.iodata_to_binary() |> :otel_db_query_text.truncate()
   end
 
-  defp encodable(value) when is_map(value) and not is_struct(value),
-    do: Map.new(value, fn {key, item} -> {key, encodable(item)} end)
+  defp json(_value, _mode, budget) when budget <= 0, do: {[], budget}
+  defp json({:plain, value}, _mode, budget), do: leaf(value, :plain, budget)
 
-  defp encodable([{key, _} | _] = value) when is_atom(key) or is_binary(key),
-    do: Jason.OrderedObject.new(Enum.map(value, fn {key, item} -> {key, encodable(item)} end))
+  defp json(value, mode, budget) when is_map(value) and not is_struct(value),
+    do: object(Map.to_list(value), mode, budget)
 
-  defp encodable(value) when is_list(value), do: Enum.map(value, &encodable/1)
-  defp encodable(value), do: plain(value)
+  defp json([{key, _} | _] = value, mode, budget) when is_atom(key) or is_binary(key),
+    do: object(value, mode, budget)
 
-  defp obfuscate(value) when is_map(value) and not is_struct(value),
-    do: Map.new(value, fn {key, item} -> {key, obfuscate(item)} end)
+  defp json(value, mode, budget) when is_list(value), do: array(value, mode, budget)
+  defp json(value, mode, budget), do: leaf(value, mode, budget)
 
-  defp obfuscate([{key, _} | _] = value) when is_atom(key) or is_binary(key),
-    do: Jason.OrderedObject.new(Enum.map(value, fn {key, item} -> {key, obfuscate(item)} end))
+  defp object(pairs, mode, budget) do
+    {items, budget} =
+      join(pairs, budget - 1, fn {key, value}, budget ->
+        key = Jason.encode!(to_string(key)) <> ":"
+        {value, budget} = json(value, mode, budget - byte_size(key))
+        {[key | value], budget}
+      end)
 
-  defp obfuscate([first | _]), do: [obfuscate(first)]
-  defp obfuscate([]), do: []
-  defp obfuscate(_value), do: "?"
+    {["{", items, "}"], budget - 1}
+  end
+
+  defp array(values, mode, budget) do
+    {items, budget} = join(values, budget - 1, &json(&1, mode, &2))
+    {["[", items, "]"], budget - 1}
+  end
+
+  defp join(values, budget, encode) do
+    {items, budget} =
+      Enum.reduce_while(values, {[], budget}, fn value, {items, budget} ->
+        if budget <= 0 do
+          {:halt, {items, budget}}
+        else
+          separator = if items == [], do: [], else: ","
+          {item, budget} = encode.(value, budget - byte_size(IO.iodata_to_binary(separator)))
+          {:cont, {[item, separator | items], budget}}
+        end
+      end)
+
+    {Enum.reverse(items), budget}
+  end
+
+  defp leaf(_value, :obfuscated, budget), do: {~s("?"), budget - 3}
+
+  defp leaf(value, :plain, budget) do
+    text = Jason.encode!(plain(value))
+    {text, budget - byte_size(text)}
+  end
 
   defp plain(value) when is_struct(value) or is_tuple(value) do
     if String.Chars.impl_for(value), do: to_string(value), else: inspect(value)
