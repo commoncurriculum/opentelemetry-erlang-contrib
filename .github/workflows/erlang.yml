@@ -100,6 +100,40 @@ jobs:
       - name: Test
         run: rebar3 ct
 
+  opentelemetry-beam:
+    needs: [test-matrix]
+    if: (contains(github.event.pull_request.labels.*.name, 'erlang') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_beam'))
+    env:
+      app: "opentelemetry_beam"
+    defaults:
+      run:
+        working-directory: instrumentation/${{ env.app }}
+    runs-on: ${{ matrix.os }}
+    name: Opentelemetry BEAM test on OTP ${{ matrix.otp_version }} with Rebar3 ${{ matrix.rebar3_version }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.test-matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          version-type: strict
+          otp-version: ${{ matrix.otp_version }}
+          rebar3-version: ${{ matrix.rebar3_version }}
+      - name: Cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/_build
+          key: ${{ runner.os }}-build-${{ matrix.otp_version }}-${{ matrix.rebar3_version }}-v3-${{ hashFiles('**/rebar.lock') }}
+      - name: Fetch deps
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: rebar3 get-deps
+      - name: Test
+        run: rebar3 ct
+
   opentelemetry-elli:
     needs: [test-matrix]
     if: (contains(github.event.pull_request.labels.*.name, 'erlang') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_elli'))
