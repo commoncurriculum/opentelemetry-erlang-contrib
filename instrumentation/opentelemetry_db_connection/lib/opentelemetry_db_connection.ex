@@ -30,7 +30,7 @@ defmodule OpentelemetryDBConnection do
     * `db.client.connection.use_time` - how long the caller held the connection
 
   And a counter, `db.client.connection.timeouts`, of callers that timed out waiting in the
-  pool's queue.
+  pool's queue: dropped from the queue, or still queued when their deadline passed.
 
   ## Attributes
 
@@ -105,11 +105,10 @@ defmodule OpentelemetryDBConnection do
       )
   end
 
-  defp handle([:db_connection, :checkout], _measurements, %{error: error} = metadata) do
-    if match?(%DBConnection.ConnectionError{reason: :queue_timeout}, error) do
-      Counter.add(DBMetrics.db_client_connection_timeouts(), 1, attributes(metadata))
-    end
-  end
+  defp handle([:db_connection, :checkout], _measurements, %{timed_out: true} = metadata),
+    do: Counter.add(DBMetrics.db_client_connection_timeouts(), 1, attributes(metadata))
+
+  defp handle([:db_connection, :checkout], _measurements, %{error: _}), do: :ok
 
   defp handle([:db_connection, :checkout], %{wait_time: wait_time}, metadata),
     do: record(DBMetrics.db_client_connection_wait_time(), wait_time, attributes(metadata))
