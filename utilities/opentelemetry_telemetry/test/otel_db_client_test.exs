@@ -90,6 +90,24 @@ defmodule OtelDbClientTest do
     assert %{"db.namespace": "app"} = :otel_attributes.map(attributes)
   end
 
+  test "a query run in another process for a caller is a child of the caller's current span" do
+    ref = make_ref()
+    caller = self()
+
+    :otel_tracer.with_span(:opentelemetry.get_tracer(), "caller", %{}, fn _ctx ->
+      Task.await(
+        Task.async(fn ->
+          Process.delete(:"$callers")
+          :otel_db_client.start(__MODULE__, ref, %{"db.system.name": :test}, %{}, caller)
+          :otel_db_client.stop(ref, 1_000, fn _span -> {%{}, %{}} end)
+        end)
+      )
+    end)
+
+    assert_receive {:span, span(name: "caller", span_id: caller_span_id)}
+    assert_receive {:span, span(name: "test", parent_span_id: ^caller_span_id)}
+  end
+
   test "a span is named after its summary, else its operation and target, else its system" do
     assert :otel_db_client.span_name(%{
              "db.system.name": :test,

@@ -190,6 +190,22 @@ defmodule OpentelemetryMongodbDriverTest do
     assert_receive {:span, span(name: "commitTransaction admin", parent_span_id: ^parent_span_id)}
   end
 
+  test "a transaction's abort is a child of the span that ran the transaction", %{conn: conn} do
+    OpentelemetryMongodbDriver.setup()
+    {:ok, _} = Mongo.insert_one(conn, "users", %{name: "Ada"})
+
+    Tracer.with_span "parent" do
+      :error =
+        Mongo.transaction(conn, fn ->
+          {:ok, _} = Mongo.insert_one(conn, "users", %{name: "Grace"})
+          :error
+        end)
+    end
+
+    assert_receive {:span, span(name: "parent", span_id: parent_span_id)}
+    assert_receive {:span, span(name: "abortTransaction admin", parent_span_id: ^parent_span_id)}
+  end
+
   describe "db.query.text" do
     test "is left out when disabled", %{conn: conn} do
       OpentelemetryMongodbDriver.setup(db_query_text: :disabled)
