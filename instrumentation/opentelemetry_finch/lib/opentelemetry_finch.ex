@@ -132,6 +132,30 @@ defmodule OpentelemetryFinch do
                     Replace every query string value in `url.full` with `REDACTED`, keeping the keys.
                     Use it when query strings can carry credentials or personal data.
                     """
+                  ],
+                  pool_metrics: [
+                    type:
+                      {:or,
+                       [
+                         {:keyword_list,
+                          [
+                            name: [type: :atom, required: true, doc: "The Finch instance's name."],
+                            pools: [
+                              type: {:list, {:or, [{:in, [:default]}, :string]}},
+                              required: true,
+                              doc:
+                                "The pools to report: `:default` and the URLs of configured pools."
+                            ]
+                          ]},
+                         {:in, [:disabled]}
+                       ]},
+                    default: :disabled,
+                    doc: """
+                    Reports the semconv `http.client.open_connections` metric with
+                    `http.connection.state` `active`: connections checked out of each HTTP/1 pool,
+                    by `server.address`, `server.port` and `url.scheme`. The pools must be started
+                    with `start_pool_metrics?: true`. HTTP/2 pools are not reported.
+                    """
                   ]
                 )
 
@@ -148,6 +172,10 @@ defmodule OpentelemetryFinch do
   @spec setup(opts()) :: :ok | {:error, :already_exists}
   def setup(opts \\ []) do
     config = opts |> NimbleOptions.validate!(@setup_schema) |> Map.new()
+
+    if config.pool_metrics != :disabled do
+      OpentelemetryFinch.PoolMetrics.setup(config.pool_metrics)
+    end
 
     :telemetry.attach(
       {__MODULE__, :request_stop},

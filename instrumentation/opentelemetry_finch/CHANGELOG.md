@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+* Added the `pool_metrics: [name: finch_name, pools: [:default | url]]` setup option. It reports
+  `http.client.open_connections` (`http.connection.state` `active`) for each HTTP/1 pool started
+  with `start_pool_metrics?: true`, by `server.address`, `server.port` and `url.scheme`. Adds a
+  dependency on `opentelemetry_api_experimental`, and `finch` becomes an optional dependency.
+
 ### Changed
 
 * Replace deprecated `OpenTelemetry.SemanticConventions.Trace` attributes with `opentelemetry_semantic_conventions` >= v1.27.0 modules (`HTTPAttributes`, `ServerAttributes`, `URLAttributes`)
