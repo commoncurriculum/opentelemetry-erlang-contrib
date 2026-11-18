@@ -1,6 +1,6 @@
 -module(otel_db_client).
 
--export([attach/3, handle_event/4, span_name/1, start/4, stop/3]).
+-export([attach/3, handle_event/4, operation_name/1, span_name/1, start/4, stop/3]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -42,6 +42,14 @@ start(Module, Key, Attributes, SpanAttributes) ->
     }),
     otel_telemetry_spans:put(Key, Span, {Module, Attributes}) orelse otel_span:end_span(Span),
     ok.
+
+%% db.operation.name from a command a driver reports as an atom, such as Postgrex's
+%% create_table: the command as the database writes it, CREATE TABLE.
+-spec operation_name(atom()) -> unicode:unicode_binary() | undefined.
+operation_name(Command) when Command =:= undefined; Command =:= nil ->
+    undefined;
+operation_name(Command) when is_atom(Command) ->
+    string:uppercase(binary:replace(atom_to_binary(Command), <<"_">>, <<" ">>, [global])).
 
 %% The semantic conventions' span name: db.query.summary; else the operation and its target; else
 %% the target alone; else db.system.name.
