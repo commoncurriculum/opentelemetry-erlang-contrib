@@ -35,6 +35,7 @@ defmodule OpentelemetryDBConnection.MixProject do
 
   def application do
     [
+      mod: {OpentelemetryDBConnection.Application, []},
       extra_applications: []
     ]
   end
@@ -44,7 +45,7 @@ defmodule OpentelemetryDBConnection.MixProject do
       {:ex_doc, "== 0.40.4", only: :dev, runtime: false},
       {:db_connection,
        github: "commoncurriculum/db_connection",
-       ref: "b1879b6d1bf5d1c7cfa98f1cd6ef06ac74e98937",
+       ref: "1a465cb4bafe0e4e369c699f22dae96b1fbe4f42",
        override: true},
       {:ch,
        github: "commoncurriculum/ch",
