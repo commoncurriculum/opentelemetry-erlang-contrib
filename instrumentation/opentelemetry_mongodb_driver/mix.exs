@@ -44,7 +44,7 @@ defmodule OpentelemetryMongodbDriver.MixProject do
       {:ex_doc, "== 0.40.4", only: :dev, runtime: false},
       {:mongodb_driver,
        github: "commoncurriculum/elixir-mongodb-driver",
-       ref: "b8dedd9c49ed7f67d3d94af16f8f7e2f1df15deb",
+       ref: "cd6258d01da5b72f0270bedc7d6d58ba780f9cd1",
        only: [:dev, :test]},
       {:opentelemetry, "== 1.7.0", only: [:dev, :test]},
       {:opentelemetry_exporter, "== 1.11.0", only: [:dev, :test]},
