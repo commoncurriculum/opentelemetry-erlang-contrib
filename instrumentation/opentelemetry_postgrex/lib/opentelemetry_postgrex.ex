@@ -24,9 +24,10 @@ defmodule OpentelemetryPostgrex do
   and the [PostgreSQL conventions](https://opentelemetry.io/docs/specs/semconv/database/postgresql/):
 
     * `db.system.name` - `postgresql`
-    * `db.namespace` - the database
-    * `db.collection.name` - the table, from the query's `:source` option, which Ecto sets; left
-      out when the statement names more than one table
+    * `db.namespace` - the database the connection uses
+    * `db.collection.name` - the one table the statement names, as written there with any database
+      prefix, else the query's `:source` option, which Ecto sets; left out when the statement names
+      more than one table
     * `db.query.summary` - each operation of the statement followed by the tables it names, such
       as `SELECT users` or `INSERT orders SELECT carts`
     * `db.query.text` - the statement, as the `:db_query_text` option says

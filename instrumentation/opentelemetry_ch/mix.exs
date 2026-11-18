@@ -44,7 +44,7 @@ defmodule OpentelemetryCh.MixProject do
       {:ex_doc, "== 0.40.4", only: :dev, runtime: false},
       {:ch,
        github: "commoncurriculum/ch",
-       ref: "d23f3c06e60f4127241b8856e92155f8767a2a7c",
+       ref: "d709d0dcee94165d4a8ea3fcaaea1b983fd0e018",
        only: [:dev, :test]},
       {:opentelemetry, "== 1.7.0", only: [:dev, :test]},
       {:opentelemetry_exporter, "== 1.11.0", only: [:dev, :test]},
@@ -55,7 +55,7 @@ defmodule OpentelemetryCh.MixProject do
       {:opentelemetry_process_propagator, "~> 0.3"},
       {:opentelemetry_telemetry,
        github: "commoncurriculum/opentelemetry-erlang-contrib",
-       ref: "9916db8432f38d2db163e8f2ad1ebe8e476ce179",
+       ref: "d46305fc908bce9648c09c25390ea9b40e323d96",
        sparse: "utilities/opentelemetry_telemetry"},
       {:opentelemetry_semantic_conventions, "~> 1.27"},
       {:telemetry, "~> 0.4 or ~> 1.0"}

@@ -687,7 +687,7 @@ jobs:
 
   opentelemetry-telemetry:
     needs: [test-matrix]
-    if: (contains(github.event.pull_request.labels.*.name, 'elixir') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_telemetry'))
+    if: github.event_name == 'push' || (contains(github.event.pull_request.labels.*.name, 'elixir') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_telemetry'))
     env:
       app: "opentelemetry_telemetry"
     defaults:
@@ -862,7 +862,7 @@ jobs:
 
   opentelemetry-mongodb-driver:
     needs: [test-matrix]
-    if: (contains(github.event.pull_request.labels.*.name, 'elixir') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_mongodb_driver'))
+    if: github.event_name == 'push' || (contains(github.event.pull_request.labels.*.name, 'elixir') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_mongodb_driver'))
     env:
       app: "opentelemetry_mongodb_driver"
     defaults:
@@ -915,7 +915,7 @@ jobs:
 
   opentelemetry-ch:
     needs: [test-matrix]
-    if: (contains(github.event.pull_request.labels.*.name, 'elixir') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_ch'))
+    if: github.event_name == 'push' || (contains(github.event.pull_request.labels.*.name, 'elixir') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_ch'))
     env:
       app: "opentelemetry_ch"
     defaults:
@@ -968,7 +968,7 @@ jobs:
 
   opentelemetry-db-connection:
     needs: [test-matrix]
-    if: (contains(github.event.pull_request.labels.*.name, 'elixir') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_db_connection'))
+    if: github.event_name == 'push' || (contains(github.event.pull_request.labels.*.name, 'elixir') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_db_connection'))
     env:
       app: "opentelemetry_db_connection"
     defaults:
@@ -1070,7 +1070,7 @@ jobs:
 
   opentelemetry-postgrex:
     needs: [test-matrix]
-    if: (contains(github.event.pull_request.labels.*.name, 'elixir') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_postgrex'))
+    if: github.event_name == 'push' || (contains(github.event.pull_request.labels.*.name, 'elixir') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_postgrex'))
     env:
       app: "opentelemetry_postgrex"
     defaults:

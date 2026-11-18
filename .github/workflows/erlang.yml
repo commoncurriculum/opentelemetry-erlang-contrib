@@ -170,7 +170,7 @@ jobs:
 
   opentelemetry-telemetry:
     needs: [test-matrix]
-    if: (contains(github.event.pull_request.labels.*.name, 'erlang') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_telemetry'))
+    if: github.event_name == 'push' || (contains(github.event.pull_request.labels.*.name, 'erlang') && contains(github.event.pull_request.labels.*.name, 'opentelemetry_telemetry'))
     env:
       app: "opentelemetry_telemetry"
     defaults:
