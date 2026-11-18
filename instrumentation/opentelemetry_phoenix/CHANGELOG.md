@@ -20,6 +20,13 @@
   `live_view.handle_event /resources/:resource_id hello`, matching how span names are
   built elsewhere in the Semantic Conventions. The module name is used as the fallback
   when a LiveView is not mounted at the router.
+* Records the `http.server.request.duration` histogram (seconds, with the Semantic
+  Conventions' advisory buckets) for every request through the endpoint's
+  `Plug.Telemetry`, including requests whose exception Phoenix renders. Attributes:
+  `http.request.method`, `url.scheme`, `http.response.status_code`, `http.route`,
+  `network.protocol.version`, and `error.type` for 5xx. Adds a dependency on
+  `opentelemetry_api_experimental`; recording is a no-op unless the
+  `opentelemetry_experimental` SDK is running.
 
 ## 2.0.0
 
