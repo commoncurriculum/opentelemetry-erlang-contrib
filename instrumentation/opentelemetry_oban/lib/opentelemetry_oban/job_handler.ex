@@ -67,6 +67,18 @@ defmodule OpentelemetryOban.JobHandler do
     attach_job_start_handler(config)
     attach_job_stop_handler(config)
     attach_job_exception_handler(config)
+    attach_process_duration_handler()
+  end
+
+  # Metrics get their own handler: telemetry detaches a handler that raises, and a
+  # metrics failure must not take the spans down with it.
+  defp attach_process_duration_handler do
+    :telemetry.attach_many(
+      "#{__MODULE__}.process_duration",
+      [[:oban, :job, :stop], [:oban, :job, :exception]],
+      &__MODULE__.handle_process_duration/4,
+      %{}
+    )
   end
 
   defp attach_job_start_handler(config) do
@@ -145,7 +157,6 @@ defmodule OpentelemetryOban.JobHandler do
 
   def handle_job_stop(_event, measurements, metadata, _config) do
     set_measurements_attributes(measurements)
-    record_process_duration(measurements, metadata, %{})
     OpentelemetryTelemetry.end_telemetry_span(@tracer_id, metadata)
   end
 
@@ -163,14 +174,16 @@ defmodule OpentelemetryOban.JobHandler do
 
     set_measurements_attributes(measurements)
 
-    record_process_duration(measurements, metadata, %{
-      ErrorAttributes.error_type() => process_error_type(reason)
-    })
-
     OpentelemetryTelemetry.end_telemetry_span(@tracer_id, metadata)
   end
 
-  defp record_process_duration(%{duration: duration}, %{job: %{queue: queue}}, attributes) do
+  def handle_process_duration([:oban, :job, event], %{duration: duration}, metadata, _config) do
+    attributes =
+      case event do
+        :stop -> %{}
+        :exception -> %{ErrorAttributes.error_type() => process_error_type(metadata.reason)}
+      end
+
     Histogram.record(
       MessagingMetrics.messaging_process_duration(),
       System.convert_time_unit(duration, :native, :nanosecond) / 1_000_000_000,
@@ -180,7 +193,7 @@ defmodule OpentelemetryOban.JobHandler do
           MessagingAttributes.messaging_operation_name() => "process",
           MessagingAttributes.messaging_operation_type() =>
             MessagingAttributes.messaging_operation_type_values().process,
-          MessagingAttributes.messaging_destination_name() => queue
+          MessagingAttributes.messaging_destination_name() => metadata.job.queue
         },
         attributes
       )

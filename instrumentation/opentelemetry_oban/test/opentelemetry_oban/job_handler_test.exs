@@ -420,6 +420,20 @@ defmodule OpentelemetryOban.JobHandlerTest do
 
       assert process_duration_counts() == expected
     end
+
+    test "a metrics failure leaves the job spans attached" do
+      :ok = Application.stop(:opentelemetry_experimental)
+      on_exit(fn -> {:ok, _} = Application.ensure_all_started(:opentelemetry_experimental) end)
+
+      Oban.insert(TestJob.new(%{}))
+      assert %{success: 1} = Oban.drain_queue(queue: :events)
+
+      assert_receive {:span, span(name: "process events")}
+
+      handler_ids = Enum.map(:telemetry.list_handlers([:oban, :job]), & &1.id)
+      assert "#{OpentelemetryOban.JobHandler}.job_stop" in handler_ids
+      refute "#{OpentelemetryOban.JobHandler}.process_duration" in handler_ids
+    end
   end
 
   for name <- [:metric, :histogram, :histogram_datapoint] do
