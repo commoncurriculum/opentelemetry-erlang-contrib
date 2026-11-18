@@ -39,7 +39,7 @@ defmodule OpentelemetryMongodbDriver do
     * `error.type` - the error code, or the error's module when it has no code
     * `db.query.text` - the command, as the `:db_query_text` option says, on the span only
 
-  Spans are named `{db.operation.name} {target}`, where the target is the collection, or the
+  Spans are named `{db.operation.name} {target}`, the command in SCREAMING_SNAKE_CASE (`FIND_AND_MODIFY users`), where the target is the collection, or the
   database when the command names no collection.
 
   ## Metrics

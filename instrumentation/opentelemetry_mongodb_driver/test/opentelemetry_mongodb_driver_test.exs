@@ -44,7 +44,7 @@ defmodule OpentelemetryMongodbDriverTest do
 
     assert_receive {:span,
                     span(
-                      name: "find users",
+                      name: "FIND users",
                       kind: :client,
                       parent_span_id: ^parent_span_id,
                       start_time: start_time,
@@ -81,8 +81,8 @@ defmodule OpentelemetryMongodbDriverTest do
 
     {:ok, _} = Mongo.insert_one(conn, "users", %{name: "Ada"})
 
-    assert_receive {:span, span(name: "insert users", status: :undefined)}
-    refute_receive {:span, span(name: "insert users")}
+    assert_receive {:span, span(name: "INSERT users", status: :undefined)}
+    refute_receive {:span, span(name: "INSERT users")}
   end
 
   test "a command that finds no server is a failed span" do
@@ -94,7 +94,7 @@ defmodule OpentelemetryMongodbDriverTest do
     catch_exit(Mongo.find_one(conn, "users", %{}, checkout_timeout: 200))
 
     assert_receive {:span,
-                    span(name: "find users", status: {:status, :error, _}, attributes: attributes)},
+                    span(name: "FIND users", status: {:status, :error, _}, attributes: attributes)},
                    1_000
 
     assert %{"server.address": "127.0.0.1", "server.port": 1, "db.namespace": @database} =
@@ -109,7 +109,7 @@ defmodule OpentelemetryMongodbDriverTest do
     end
 
     assert_receive {:span, span(name: "parent", span_id: parent_span_id)}
-    assert_receive {:span, span(name: "aggregate users", parent_span_id: ^parent_span_id)}
+    assert_receive {:span, span(name: "AGGREGATE users", parent_span_id: ^parent_span_id)}
   end
 
   test "a command without a collection is named after its operation and database", %{conn: conn} do
@@ -117,7 +117,7 @@ defmodule OpentelemetryMongodbDriverTest do
 
     {:ok, _} = Mongo.command(conn, ping: 1)
 
-    assert_receive {:span, span(name: "ping " <> @database, attributes: attributes)}
+    assert_receive {:span, span(name: "PING " <> @database, attributes: attributes)}
     refute Map.has_key?(:otel_attributes.map(attributes), :"db.collection.name")
   end
 
@@ -129,7 +129,7 @@ defmodule OpentelemetryMongodbDriverTest do
 
     assert_receive {:span,
                     span(
-                      name: "bogusCommand " <> @database,
+                      name: "BOGUS_COMMAND " <> @database,
                       status: {:status, :error, "59"},
                       attributes: attributes
                     )}
@@ -146,11 +146,11 @@ defmodule OpentelemetryMongodbDriverTest do
     {:ok, _} = Mongo.insert_one(conn, "users", %{_id: id, email: "ada@example.com"})
     {:error, %Mongo.WriteError{}} = Mongo.insert_one(conn, "users", %{_id: id})
 
-    assert_receive {:span, span(name: "insert users", status: :undefined)}
+    assert_receive {:span, span(name: "INSERT users", status: :undefined)}
 
     assert_receive {:span,
                     span(
-                      name: "insert users",
+                      name: "INSERT users",
                       status: {:status, :error, "11000"},
                       attributes: attributes
                     )}
@@ -169,7 +169,7 @@ defmodule OpentelemetryMongodbDriverTest do
 
     assert_receive {:span,
                     span(
-                      name: "find users",
+                      name: "FIND users",
                       status: {:status, :error, "Mongo.Error"}
                     )}
   end
@@ -187,7 +187,9 @@ defmodule OpentelemetryMongodbDriverTest do
     end
 
     assert_receive {:span, span(name: "parent", span_id: parent_span_id)}
-    assert_receive {:span, span(name: "commitTransaction admin", parent_span_id: ^parent_span_id)}
+
+    assert_receive {:span,
+                    span(name: "COMMIT_TRANSACTION admin", parent_span_id: ^parent_span_id)}
   end
 
   test "a transaction's abort is a child of the span that ran the transaction", %{conn: conn} do
@@ -203,7 +205,7 @@ defmodule OpentelemetryMongodbDriverTest do
     end
 
     assert_receive {:span, span(name: "parent", span_id: parent_span_id)}
-    assert_receive {:span, span(name: "abortTransaction admin", parent_span_id: ^parent_span_id)}
+    assert_receive {:span, span(name: "ABORT_TRANSACTION admin", parent_span_id: ^parent_span_id)}
   end
 
   describe "db.query.text" do
@@ -212,7 +214,7 @@ defmodule OpentelemetryMongodbDriverTest do
 
       Mongo.find(conn, "users", %{name: "Ada"}) |> Enum.to_list()
 
-      assert_receive {:span, span(name: "find users", attributes: attributes)}
+      assert_receive {:span, span(name: "FIND users", attributes: attributes)}
       refute Map.has_key?(:otel_attributes.map(attributes), :"db.query.text")
     end
 
@@ -222,7 +224,7 @@ defmodule OpentelemetryMongodbDriverTest do
 
       Mongo.find(conn, "users", %{name: "Ada"}) |> Enum.to_list()
 
-      assert_receive {:span, span(name: "find users", attributes: attributes)}
+      assert_receive {:span, span(name: "FIND users", attributes: attributes)}
 
       assert %{"db.query.text": text} = :otel_attributes.map(attributes)
 
@@ -238,7 +240,7 @@ defmodule OpentelemetryMongodbDriverTest do
       encoded_id = BSON.ObjectId.encode!(id)
       Mongo.find(conn, "users", %{_id: id, name: "Ada"}) |> Enum.to_list()
 
-      assert_receive {:span, span(name: "find users", attributes: attributes)}
+      assert_receive {:span, span(name: "FIND users", attributes: attributes)}
 
       assert %{"db.query.text": text} = :otel_attributes.map(attributes)
 
@@ -253,7 +255,7 @@ defmodule OpentelemetryMongodbDriverTest do
 
       {:ok, _} = Mongo.insert_one(conn, "users", %{name: "Ada", born: ~U[1815-12-10 00:00:00Z]})
 
-      assert_receive {:span, span(name: "insert users", attributes: attributes)}
+      assert_receive {:span, span(name: "INSERT users", attributes: attributes)}
 
       assert %{"db.query.text": text} = :otel_attributes.map(attributes)
 
@@ -270,7 +272,7 @@ defmodule OpentelemetryMongodbDriverTest do
       {:ok, _} =
         Mongo.insert_many(conn, "users", [%{name: "Ada", tags: ["a", "b"]}, %{born: 1906}])
 
-      assert_receive {:span, span(name: "insert users", attributes: attributes)}
+      assert_receive {:span, span(name: "INSERT users", attributes: attributes)}
       assert %{"db.query.text": text} = :otel_attributes.map(attributes)
 
       assert %{
@@ -285,7 +287,7 @@ defmodule OpentelemetryMongodbDriverTest do
       documents = for i <- 1..20_000, do: %{i: i, name: "user #{i}"}
       {:ok, _} = Mongo.insert_many(conn, "users", documents)
 
-      assert_receive {:span, span(name: "insert users", attributes: attributes)}
+      assert_receive {:span, span(name: "INSERT users", attributes: attributes)}
 
       assert %{"db.query.text": ~s({"insert":"users",) <> _ = text} =
                :otel_attributes.map(attributes)
@@ -298,7 +300,7 @@ defmodule OpentelemetryMongodbDriverTest do
 
       Mongo.find(conn, "users", %{name: String.duplicate("é", 2_000)}) |> Enum.to_list()
 
-      assert_receive {:span, span(name: "find users", attributes: attributes)}
+      assert_receive {:span, span(name: "FIND users", attributes: attributes)}
       assert %{"db.query.text": text} = :otel_attributes.map(attributes)
       assert byte_size(text) in 2047..2048
       assert String.valid?(text)

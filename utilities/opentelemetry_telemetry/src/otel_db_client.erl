@@ -58,7 +58,9 @@ operation_name(Command) when is_atom(Command) ->
     string:uppercase(binary:replace(atom_to_binary(Command), <<"_">>, <<" ">>, [global])).
 
 %% The semantic conventions' span name: db.query.summary; else the operation and its target; else
-%% the target alone; else db.system.name.
+%% the target alone; else db.system.name. The operation is written in SCREAMING_SNAKE_CASE, so a
+%% name reads the same for every database (FIND_AND_MODIFY users, SELECT users); db.operation.name
+%% keeps the database's own spelling.
 -spec span_name(map()) -> unicode:unicode_binary().
 span_name(#{'db.query.summary' := Summary}) ->
     Summary;
@@ -66,9 +68,13 @@ span_name(Attributes) ->
     case {maps:get('db.operation.name', Attributes, undefined), target(Attributes)} of
         {undefined, undefined} -> to_binary(maps:get('db.system.name', Attributes));
         {undefined, Target} -> Target;
-        {Operation, undefined} -> Operation;
-        {Operation, Target} -> <<Operation/binary, " ", Target/binary>>
+        {Operation, undefined} -> screaming_snake(Operation);
+        {Operation, Target} -> <<(screaming_snake(Operation))/binary, " ", Target/binary>>
     end.
+
+screaming_snake(Operation) ->
+    Snake = re:replace(Operation, <<"([a-z0-9])([A-Z])">>, <<"\\1_\\2">>, [global, {return, binary}]),
+    string:uppercase(binary:replace(Snake, <<" ">>, <<"_">>, [global])).
 
 target(#{'db.collection.name' := Collection}) ->
     Collection;
