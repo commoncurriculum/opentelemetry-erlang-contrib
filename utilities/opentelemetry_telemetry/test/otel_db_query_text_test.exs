@@ -74,7 +74,7 @@ defmodule OtelDbQueryTextTest do
     assert byte_size(summary) == 255
   end
 
-  test "attributes name the source as the collection only when the statement names one table" do
+  test "attributes name the collection only when the statement names one table, as written there" do
     assert :otel_db_query_text.attributes(
              "SELECT * FROM users WHERE id = 1",
              "users",
@@ -82,6 +82,13 @@ defmodule OtelDbQueryTextTest do
            ) ==
              {%{"db.query.summary": "SELECT users", "db.collection.name": "users"},
               %{"db.query.text": "SELECT * FROM users WHERE id = ?"}}
+
+    assert :otel_db_query_text.attributes(~s(SELECT * FROM "other"."users"), "users", :disabled) ==
+             {%{"db.query.summary": "SELECT other.users", "db.collection.name": "other.users"},
+              %{}}
+
+    assert :otel_db_query_text.attributes("SELECT 1", "users", :disabled) ==
+             {%{"db.query.summary": "SELECT", "db.collection.name": "users"}, %{}}
 
     assert :otel_db_query_text.attributes("SELECT * FROM a JOIN b ON a.id = b.id", "a", :disabled) ==
              {%{"db.query.summary": "SELECT a b"}, %{}}

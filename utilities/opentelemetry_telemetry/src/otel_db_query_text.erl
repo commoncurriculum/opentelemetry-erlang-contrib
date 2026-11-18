@@ -22,16 +22,17 @@
         ")").
 
 %% A SQL statement's attributes for the span and its duration measurement: db.query.summary, and
-%% db.collection.name from Source only when the statement names at most one table; and for the
-%% span alone db.query.text, as Mode says.
+%% db.collection.name when the statement names one table, as written there with any database
+%% prefix, else Source when it names none; and for the span alone db.query.text, as Mode says.
 -spec attributes(iodata(), binary() | nil | undefined, disabled | plain | obfuscated) ->
     {map(), map()}.
 attributes(Statement, Source, Mode) ->
     {Summary, Tables} = summary(Statement),
     Attributes = maybe_put('db.query.summary', Summary, #{}),
     {case Tables of
-         [_, _ | _] -> Attributes;
-         _ -> maybe_put('db.collection.name', Source, Attributes)
+         [Table] -> Attributes#{'db.collection.name' => Table};
+         [] -> maybe_put('db.collection.name', Source, Attributes);
+         _ -> Attributes
      end,
      case Mode of
          disabled -> #{};
