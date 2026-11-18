@@ -44,8 +44,8 @@ defmodule OpentelemetryPhoenix.LiveViewTest do
     @impl true
     def render(assigns) do
       ~H"""
-      <%= @assign_async.ok? && @assign_async.result %>
-      <%= assigns[:start_async] && @start_async.ok? && @start_async.result %>
+      {@assign_async.ok? && @assign_async.result}
+      {assigns[:start_async] && @start_async.ok? && @start_async.result}
       """
     end
   end
@@ -81,12 +81,11 @@ defmodule OpentelemetryPhoenix.LiveViewTest do
     Application.put_env(
       :opentelemetry_phoenix,
       Endpoint,
-      [
-        secret_key_base: "secret_key_base",
-        live_view: [signing_salt: "signing_salt"],
-        render_errors: [formats: [html: ErrorHTML]]
-      ]
+      secret_key_base: "secret_key_base",
+      live_view: [signing_salt: "signing_salt"],
+      render_errors: [formats: [html: ErrorHTML]]
     )
+
     :otel_simple_processor.set_exporter(:otel_exporter_pid, self())
 
     {:ok, _} = start_supervised(Endpoint)
@@ -119,7 +118,6 @@ defmodule OpentelemetryPhoenix.LiveViewTest do
                       trace_id: ^trace_id,
                       parent_span_id: ^process_span_id
                     )}
-
 
     assert_receive {:span,
                     span(
