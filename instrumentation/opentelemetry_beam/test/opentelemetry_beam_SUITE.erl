@@ -12,7 +12,8 @@ all() ->
         counts_against_limits,
         memory_by_type_and_state,
         scheduler_utilization,
-        longest_message_queue
+        longest_message_queue,
+        largest_process
     ].
 
 init_per_suite(Config) ->
@@ -79,6 +80,24 @@ longest_message_queue(_Config) ->
     Pid ! stop,
     ?assert(Length >= 100000, Length),
     ?assertEqual(#{'beam.process.registered_name' => <<"opentelemetry_beam_blocked">>,
+                   'beam.process.initial_call' => <<"erlang:apply/2">>},
+                 Attributes),
+    ok.
+
+largest_process(_Config) ->
+    Self = self(),
+    Pid = spawn_link(fun() ->
+                             true = register(opentelemetry_beam_large, self()),
+                             Big = lists:seq(1, 2000000),
+                             Self ! built,
+                             receive stop -> length(Big) end
+                     end),
+    receive built -> ok end,
+    {memory, Memory} = erlang:process_info(Pid, memory),
+    [{Max, Attributes}] = points('beam.process.memory.max', collect()),
+    Pid ! stop,
+    ?assert(Max >= Memory andalso Memory > 30000000, {Max, Memory}),
+    ?assertEqual(#{'beam.process.registered_name' => <<"opentelemetry_beam_large">>,
                    'beam.process.initial_call' => <<"erlang:apply/2">>},
                  Attributes),
     ok.
