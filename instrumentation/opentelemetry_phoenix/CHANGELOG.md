@@ -11,6 +11,10 @@
 
 ### Features
 
+* Added `OpentelemetryPhoenix.LiveView.assign_async/4` and `start_async/4`, which carry the
+  caller's OpenTelemetry context into the async task (from
+  open-telemetry/opentelemetry-erlang-contrib#439). `phoenix`, `phoenix_html` and
+  `phoenix_live_view` are now optional dependencies instead of dev/test-only ones.
 * LiveView `handle_event` spans now carry `http.route`. The route resolved during
   `mount`/`handle_params` is kept for the lifetime of the LiveView process, since
   `handle_event` telemetry metadata carries no URI and the socket keeps no path.
