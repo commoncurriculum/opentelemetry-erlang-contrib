@@ -86,7 +86,7 @@ defmodule OtelDbClientTest do
 
     :otel_db_client.stop(ref, 1_000, fn _span -> {%{"db.namespace": "app"}, %{}} end)
 
-    assert_receive {:span, span(name: "ping app", attributes: attributes)}
+    assert_receive {:span, span(name: "PING app", attributes: attributes)}
     assert %{"db.namespace": "app"} = :otel_attributes.map(attributes)
   end
 
@@ -99,10 +99,14 @@ defmodule OtelDbClientTest do
 
     for {attributes, name} <- [
           {%{"db.operation.name": "find", "db.collection.name": "users", "db.namespace": "app"},
-           "find users"},
-          {%{"db.operation.name": "ping", "db.namespace": "app"}, "ping app"},
-          {%{"db.operation.name": "ping", "server.address": "db", "server.port": 1}, "ping db:1"},
-          {%{"db.operation.name": "ping"}, "ping"},
+           "FIND users"},
+          {%{"db.operation.name": "findAndModify", "db.collection.name": "users"},
+           "FIND_AND_MODIFY users"},
+          {%{"db.operation.name": "CREATE TABLE", "db.collection.name": "users"},
+           "CREATE_TABLE users"},
+          {%{"db.operation.name": "ping", "db.namespace": "app"}, "PING app"},
+          {%{"db.operation.name": "ping", "server.address": "db", "server.port": 1}, "PING db:1"},
+          {%{"db.operation.name": "ping"}, "PING"},
           {%{"db.namespace": "app"}, "app"},
           {%{}, "test"}
         ] do

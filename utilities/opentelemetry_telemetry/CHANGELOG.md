@@ -6,6 +6,8 @@
 
 * `otel_telemetry_spans` keeps spans whose start and stop events fire in different processes,
   and ends the spans of callers that exit before their stop.
+* `otel_db_client` writes the operation in a span name in SCREAMING_SNAKE_CASE (`FIND_AND_MODIFY users`,
+  `CREATE_TABLE users`); `db.operation.name` keeps the database's own spelling.
 
 ### Fixes
 
