@@ -27,4 +27,50 @@ defmodule OtelDbQueryTextTest do
     assert :otel_db_query_text.truncate("short") == "short"
     assert byte_size(:otel_db_query_text.truncate("a" <> String.duplicate("é", 2_000))) == 2047
   end
+
+  defp summary(sql), do: :otel_db_query_text.summary(sql)
+
+  test "a summary names every operation and the tables it touches, in order" do
+    assert summary(~s|SELECT o0."id" FROM "oban_jobs" AS o0 WHERE o0."state" = $1|) ==
+             {"SELECT oban_jobs", ["oban_jobs"]}
+
+    assert summary(
+             "INSERT INTO shipping_details (order_id, address) SELECT order_id, address FROM orders WHERE order_id = 1"
+           ) ==
+             {"INSERT shipping_details SELECT orders", ["orders", "shipping_details"]}
+
+    assert summary("SELECT * FROM songs s, artists a WHERE s.artist_id = a.id") ==
+             {"SELECT songs artists", ["artists", "songs"]}
+
+    assert summary("select * from songs join public.artists on artists.id = songs.artist_id") ==
+             {"SELECT songs public.artists", ["public.artists", "songs"]}
+
+    assert summary("UPDATE users SET name = 'FROM x' WHERE id = 1") == {"UPDATE users", ["users"]}
+
+    assert summary("DELETE FROM users WHERE id IN (SELECT id FROM banned)") ==
+             {"DELETE users SELECT banned", ["banned", "users"]}
+  end
+
+  test "a summary skips subqueries, comments and literals that look like tables" do
+    assert summary("SELECT count(*) FROM (SELECT 1 FROM t) AS sub") == {"SELECT SELECT t", ["t"]}
+    assert summary("/* FROM a */ SELECT 'FROM b' -- FROM c\n FROM d") == {"SELECT d", ["d"]}
+
+    assert summary("SELECT * FROM generate_series(1, 10)") ==
+             {"SELECT generate_series", ["generate_series"]}
+  end
+
+  test "a summary names statements that touch no table" do
+    assert summary("BEGIN") == {"BEGIN", []}
+    assert summary("SELECT 1") == {"SELECT", []}
+    assert summary("TRUNCATE TABLE events") == {"TRUNCATE events", ["events"]}
+    assert summary("COPY users FROM STDIN") == {"COPY users", ["users"]}
+    assert summary("WITH x AS (SELECT 1) SELECT * FROM x") == {"SELECT SELECT x", ["x"]}
+    assert summary("EXPLAIN") == {:undefined, []}
+  end
+
+  test "a summary is cut to 255 bytes" do
+    tables = Enum.map_join(1..100, ", ", &"table_#{&1}")
+    assert {summary, _tables} = summary("SELECT * FROM " <> tables)
+    assert byte_size(summary) == 255
+  end
 end
