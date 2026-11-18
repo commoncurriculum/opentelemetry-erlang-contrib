@@ -62,6 +62,24 @@ defmodule OpentelemetryOban do
       fetching, staging and acknowledging jobs, so the queries it makes have a parent span.
       Off by default, because Oban polls every queue on every node; set to `[]` to turn it on.
       """
+    ],
+    queue_metrics: [
+      type:
+        {:or,
+         [
+           {:keyword_list,
+            [name: [type: :any, required: true, doc: "The Oban instance's name."]]},
+           {:in, [:disabled]}
+         ]},
+      type_spec: quote(do: [name: Oban.name()] | :disabled),
+      default: :disabled,
+      doc: """
+      Reports `oban.job.count` (jobs by queue and `oban.job.state`, from `Oban.Met`) and
+      `oban.queue.lag` (seconds since each queue's oldest available job became ready; 0 for a
+      configured queue with none waiting) for one Oban instance, such as `[name: Oban]`. Only the
+      instance's leader reports, since every node sees the same jobs table. Needs the `:oban_met`
+      dependency.
+      """
     ]
   ]
 
@@ -97,6 +115,10 @@ defmodule OpentelemetryOban do
 
     if opts.internal != :disabled do
       OpentelemetryOban.InternalHandler.attach()
+    end
+
+    if opts.queue_metrics != :disabled do
+      OpentelemetryOban.QueueMetrics.setup(opts.queue_metrics)
     end
 
     :ok
