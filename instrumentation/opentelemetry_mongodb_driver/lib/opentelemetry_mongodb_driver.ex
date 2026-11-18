@@ -56,7 +56,6 @@ defmodule OpentelemetryMongodbDriver do
     [:mongodb_driver, :command, :exception]
   ]
 
-  @default_port 27017
   @max_query_text_bytes 2048
 
   @options_schema NimbleOptions.new!(

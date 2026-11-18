@@ -109,4 +109,10 @@ defmodule OtelDbClientTest do
       assert :otel_db_client.span_name(Map.put(attributes, :"db.system.name", :test)) == name
     end
   end
+
+  test "a driver's command atom is the operation name as the database writes it" do
+    assert :otel_db_client.operation_name(:insert) == "INSERT"
+    assert :otel_db_client.operation_name(:create_table) == "CREATE TABLE"
+    assert :otel_db_client.operation_name(nil) == :undefined
+  end
 end

@@ -27,6 +27,7 @@ defmodule OpentelemetryCh do
     * `db.collection.name` - the one table the statement names, as written there with any database
       prefix, else the query's `:source` option, which Ecto sets; left out when the statement names
       more than one table
+    * `db.operation.name` - the command `Ch` runs the query as, such as `SELECT` or `INSERT`
     * `db.query.summary` - each operation of the statement followed by the tables it names, such
       as `SELECT events` or `INSERT events SELECT staging`
     * `db.query.text` - the statement, as the `:db_query_text` option says
@@ -128,6 +129,10 @@ defmodule OpentelemetryCh do
   defp connection_attributes(metadata) do
     %{:"db.system.name" => :clickhouse}
     |> maybe_put(DBAttributes.db_namespace(), metadata.database)
+    |> maybe_put(
+      DBAttributes.db_operation_name(),
+      :otel_db_client.operation_name(metadata.query.command)
+    )
     |> maybe_put(ServerAttributes.server_address(), metadata.hostname)
     |> maybe_put(ServerAttributes.server_port(), server_port(metadata.port))
   end
@@ -164,6 +169,6 @@ defmodule OpentelemetryCh do
     _error -> nil
   end
 
-  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, _key, value) when value in [nil, :undefined], do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

@@ -59,6 +59,7 @@ defmodule OpentelemetryChTest do
     assert :otel_attributes.map(attributes) == %{
              "db.system.name": :clickhouse,
              "db.namespace": @database,
+             "db.operation.name": "SELECT",
              "db.query.summary": "SELECT",
              "db.query.text": "SELECT {a:UInt8}",
              "db.response.returned_rows": 1,
@@ -300,6 +301,7 @@ defmodule OpentelemetryChTest do
                      attributes: %{
                        "db.system.name": :clickhouse,
                        "db.namespace": @database,
+                       "db.operation.name": "SELECT",
                        "db.collection.name": "events",
                        "db.query.summary": "SELECT events"
                      }

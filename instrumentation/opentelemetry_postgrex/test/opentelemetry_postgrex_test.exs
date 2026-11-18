@@ -65,6 +65,7 @@ defmodule OpentelemetryPostgrexTest do
     assert :otel_attributes.map(attributes) == %{
              "db.system.name": :postgresql,
              "db.namespace": @database,
+             "db.operation.name": "SELECT",
              "db.query.summary": "SELECT",
              "db.query.text": "SELECT $1::int",
              "db.response.returned_rows": 1,
@@ -79,6 +80,20 @@ defmodule OpentelemetryPostgrexTest do
 
     assert_receive {:span, span(name: "INSERT otel_events", attributes: attributes)}
     assert %{"db.collection.name": "otel_events"} = :otel_attributes.map(attributes)
+  end
+
+  test "the operation is the command the server reported, not the first word of the text",
+       %{conn: conn} do
+    OpentelemetryPostgrex.setup()
+
+    Postgrex.query!(
+      conn,
+      "WITH v AS (SELECT $1::text AS name) INSERT INTO otel_events SELECT name FROM v",
+      ["Ada"]
+    )
+
+    assert_receive {:span, span(attributes: attributes)}
+    assert %{"db.operation.name": "INSERT"} = :otel_attributes.map(attributes)
   end
 
   test "returned rows are only the rows the server sent back", %{conn: conn} do
@@ -101,7 +116,7 @@ defmodule OpentelemetryPostgrexTest do
     assert_receive {:span, span(name: "SELECT SELECT t", attributes: attributes)}
     attributes = :otel_attributes.map(attributes)
     assert %{"db.query.summary": "SELECT SELECT t", "db.collection.name": "t"} = attributes
-    refute Map.has_key?(attributes, :"db.operation.name")
+    assert %{"db.operation.name": "SELECT"} = attributes
 
     Postgrex.query!(
       conn,
@@ -316,6 +331,7 @@ defmodule OpentelemetryPostgrexTest do
                      attributes: %{
                        "db.system.name": :postgresql,
                        "db.namespace": @database,
+                       "db.operation.name": "SELECT",
                        "db.collection.name": "otel_events",
                        "db.query.summary": "SELECT otel_events"
                      }
