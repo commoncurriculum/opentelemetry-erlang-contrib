@@ -146,7 +146,7 @@ subject_attributes(Pid) when is_pid(Pid) ->
         [{registered_name, Name}, {initial_call, InitialCall}, {dictionary, Dictionary},
          {memory, Memory}, {binary, Binaries}, {message_queue_len, QueueLen},
          {current_stacktrace, Stacktrace}] ->
-            {(opentelemetry_beam_metrics:process_attributes(Name, InitialCall, Dictionary))#{
+            {(process_attributes(Name, InitialCall, Dictionary))#{
                 'beam.process.pid' => list_to_binary(pid_to_list(Pid)),
                 'beam.process.memory' => Memory,
                 'beam.process.binary.memory' => lists:sum([Size || {_, Size, _} <- Binaries]),
@@ -158,6 +158,17 @@ subject_attributes(Pid) when is_pid(Pid) ->
     end;
 subject_attributes(Port) when is_port(Port) ->
     {port_attributes(Port), []}.
+
+%% proc_lib processes all start in proc_lib:init_p/5 and keep their real
+%% initial call in the process dictionary.
+process_attributes(Name, InitialCall, Dictionary) ->
+    {M, F, A} = proplists:get_value('$initial_call', Dictionary, InitialCall),
+    Attributes = #{'beam.process.initial_call' =>
+                       iolist_to_binary(io_lib:format("~ts:~ts/~b", [M, F, A]))},
+    case Name of
+        [] -> Attributes;
+        _ -> Attributes#{'beam.process.registered_name' => atom_to_binary(Name)}
+    end.
 
 event_attributes(long_gc, Info) ->
     #{'beam.process.gc.duration' => proplists:get_value(timeout, Info)};

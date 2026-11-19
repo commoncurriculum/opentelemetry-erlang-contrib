@@ -14,7 +14,6 @@ all() ->
         counts_against_limits,
         memory_by_type_and_state,
         scheduler_utilization,
-        longest_message_queue,
         persistent_terms,
         large_heap,
         long_gc,
@@ -78,18 +77,6 @@ memory_by_type_and_state(_Config) ->
 scheduler_utilization(_Config) ->
     Utilization = single_value('beam.scheduler.utilization', collect()),
     ?assert(Utilization >= 0 andalso Utilization =< 1, Utilization),
-    ok.
-
-longest_message_queue(_Config) ->
-    Pid = spawn_link(fun() -> receive stop -> ok end end),
-    true = register(opentelemetry_beam_blocked, Pid),
-    [Pid ! {filler, N} || N <- lists:seq(1, 100000)],
-    [{Length, Attributes}] = points('beam.process.message_queue_len.max', collect()),
-    Pid ! stop,
-    ?assert(Length >= 100000, Length),
-    ?assertEqual(#{'beam.process.registered_name' => <<"opentelemetry_beam_blocked">>,
-                   'beam.process.initial_call' => <<"erlang:apply/2">>},
-                 Attributes),
     ok.
 
 persistent_terms(_Config) ->

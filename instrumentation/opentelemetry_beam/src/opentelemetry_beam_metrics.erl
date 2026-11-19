@@ -7,7 +7,7 @@
 
 -module(opentelemetry_beam_metrics).
 
--export([setup/0, setup/1, process_attributes/3]).
+-export([setup/0, setup/1]).
 -ignore_xref([setup/0, setup/1, setup/2]).
 
 -include_lib("opentelemetry_api_experimental/include/otel_meter.hrl").
@@ -278,12 +278,6 @@ setup(Meter, Opts) ->
         unit => '{node}'}),
 
     otel_meter:create_observable_gauge(
-      Meter, 'beam.process.message_queue_len.max',
-      fun message_queue_len_max/1, [],
-      #{description => <<"The longest message queue of any process, with that "
-                         "process's registered name and initial call.">>,
-        unit => '{message}'}),
-    otel_meter:create_observable_gauge(
       Meter, 'beam.scheduler.utilization',
       fun(_) -> [{opentelemetry_beam_scheduler:utilization(), #{}}] end, [],
       #{description => <<"Share of time the normal and dirty CPU schedulers spent "
@@ -484,38 +478,6 @@ vm_memory_gauges(_) ->
        {?gv(code, Data), #{'beam.memory.type' => code}},
        {?gv(ets, Data), #{'beam.memory.type' => ets}},
        {memory_other(Data), #{'beam.memory.type' => other}}]}].
-
-message_queue_len_max(_) ->
-    {Length, Longest} =
-        lists:foldl(
-          fun(Pid, {Max, _} = Acc) ->
-                  case erlang:process_info(Pid, message_queue_len) of
-                      {message_queue_len, Len} when Len > Max -> {Len, Pid};
-                      _ -> Acc
-                  end
-          end, {0, undefined}, erlang:processes()),
-    [{Length, process_attributes(Longest)}].
-
-process_attributes(undefined) ->
-    #{};
-process_attributes(Pid) ->
-    case erlang:process_info(Pid, [registered_name, initial_call, dictionary]) of
-        [{registered_name, Name}, {initial_call, InitialCall}, {dictionary, Dictionary}] ->
-            process_attributes(Name, InitialCall, Dictionary);
-        undefined ->
-            #{}
-    end.
-
-process_attributes(Name, InitialCall, Dictionary) ->
-    %% proc_lib processes all start in proc_lib:init_p/5 and keep their real
-    %% initial call in the process dictionary.
-    {M, F, A} = proplists:get_value('$initial_call', Dictionary, InitialCall),
-    Attributes = #{'beam.process.initial_call' =>
-                       iolist_to_binary(io_lib:format("~ts:~ts/~b", [M, F, A]))},
-    case Name of
-        [] -> Attributes;
-        _ -> Attributes#{'beam.process.registered_name' => atom_to_binary(Name)}
-    end.
 
 vm_msacc_counters(_) ->
     SecondAsPerfCounter = erlang:convert_time_unit(1, second, perf_counter),
