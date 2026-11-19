@@ -19,7 +19,9 @@ all() ->
         large_heap,
         long_gc,
         long_schedule,
-        busy_port
+        busy_port,
+        long_message_queue,
+        max_heap_size
     ].
 
 init_per_suite(Config) ->
@@ -168,6 +170,52 @@ busy_port(_Config) ->
                  Attributes),
     ?assertEqual(list_to_binary(erlang:port_to_list(Port)), maps:get('beam.port.id', Attributes)),
     ok.
+
+long_message_queue(_Config) ->
+    case catch erlang:system_monitor(self(), [{long_message_queue, {1, 2}}]) of
+        {'EXIT', {badarg, _}} ->
+            {skip, long_message_queue_unsupported};
+        _ ->
+            erlang:system_monitor(undefined),
+            start_system_monitor(long_message_queue, {100, 1000}),
+            Pid = spawn_link(fun() ->
+                                     true = register(opentelemetry_beam_long_queue, self()),
+                                     receive stop -> ok end
+                             end),
+            [Pid ! {filler, N} || N <- lists:seq(1, 2000)],
+            {Attributes, _} = receive_span(<<"beam.process.long_message_queue">>),
+            Pid ! stop,
+            stop_system_monitor(long_message_queue),
+            ?assertMatch(#{'beam.process.registered_name' := <<"opentelemetry_beam_long_queue">>}, Attributes),
+            ?assert(maps:get('beam.process.message_queue_len', Attributes) >= 1000),
+            ok
+    end.
+
+max_heap_size(_Config) ->
+    case opentelemetry_beam_system_monitor:supports_shared_binaries() of
+        false ->
+            {skip, include_shared_binaries_unsupported};
+        true ->
+            Before = erlang:system_info(max_heap_size),
+            start_system_monitor(max_heap_size_bytes, 10000000),
+            Pid = spawn_link(fun() ->
+                                     true = register(opentelemetry_beam_binaries, self()),
+                                     Binaries = [binary:copy(<<1>>, 1000000) || _ <- lists:seq(1, 20)],
+                                     erlang:garbage_collect(),
+                                     receive stop -> length(Binaries) end
+                             end),
+            {Attributes, _} = receive_span(<<"beam.process.max_heap_size">>),
+            Pid ! stop,
+            stop_system_monitor(max_heap_size_bytes),
+            ?assertMatch(#{'beam.process.registered_name' := <<"opentelemetry_beam_binaries">>,
+                           'beam.process.max_heap_size' := 10000000},
+                         Attributes),
+            ?assert(maps:get('beam.process.binary.memory', Attributes) + maps:get('beam.process.memory', Attributes) > 10000000),
+            ?assertEqual(Before, erlang:system_info(max_heap_size)),
+            #{filters := Filters} = logger:get_primary_config(),
+            ?assertNot(lists:keymember(opentelemetry_beam_max_heap_size, 1, Filters)),
+            ok
+    end.
 
 collect_large_heap(Name) ->
     true = register(Name, self()),
