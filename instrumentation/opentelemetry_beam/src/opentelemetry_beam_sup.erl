@@ -10,4 +10,11 @@ start_link() ->
 init([]) ->
     {ok, {#{strategy => one_for_one},
           [#{id => opentelemetry_beam_scheduler,
-             start => {opentelemetry_beam_scheduler, start_link, []}}]}}.
+             start => {opentelemetry_beam_scheduler, start_link, []}}
+           | system_monitor_child(opentelemetry_beam_system_monitor:options())]}}.
+
+system_monitor_child([]) ->
+    [];
+system_monitor_child(Options) ->
+    [#{id => opentelemetry_beam_system_monitor,
+       start => {opentelemetry_beam_system_monitor, start_link, [Options]}}].

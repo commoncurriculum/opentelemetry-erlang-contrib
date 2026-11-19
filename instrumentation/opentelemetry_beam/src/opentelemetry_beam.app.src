@@ -1,7 +1,7 @@
 {application, opentelemetry_beam,
  [{description, "OpenTelemetry BEAM VM Instrumentation"},
   {vsn, "0.1.0"},
-  {registered, [opentelemetry_beam_sup, opentelemetry_beam_scheduler]},
+  {registered, [opentelemetry_beam_sup, opentelemetry_beam_scheduler, opentelemetry_beam_system_monitor]},
   {mod, {opentelemetry_beam_app, []}},
   {applications,
    [kernel,

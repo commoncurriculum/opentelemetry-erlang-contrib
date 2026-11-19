@@ -1,0 +1,136 @@
+-module(opentelemetry_beam_system_monitor).
+
+-behaviour(gen_server).
+
+-export([start_link/1, options/0]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
+
+-define(REPEAT_AFTER_MS, 60000).
+
+start_link(Options) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, Options, []).
+
+options() ->
+    lists:flatmap(fun option/1, [large_heap_bytes, long_gc_ms, long_schedule_ms,
+                                 busy_port, busy_dist_port]).
+
+option(Key) ->
+    case {Key, application:get_env(opentelemetry_beam, Key)} of
+        {large_heap_bytes, {ok, Bytes}} when is_integer(Bytes), Bytes > 0 ->
+            [{large_heap, Bytes div erlang:system_info(wordsize)}];
+        {long_gc_ms, {ok, Ms}} when is_integer(Ms), Ms > 0 ->
+            [{long_gc, Ms}];
+        {long_schedule_ms, {ok, Ms}} when is_integer(Ms), Ms > 0 ->
+            [{long_schedule, Ms}];
+        {busy_port, {ok, true}} ->
+            [busy_port];
+        {busy_dist_port, {ok, true}} ->
+            [busy_dist_port];
+        _ ->
+            []
+    end.
+
+%% The VM allows one system monitor per node, and it is cleared when this process exits.
+init(Options) ->
+    _ = erlang:system_monitor(self(), Options),
+    {ok, #{}}.
+
+handle_call(_Request, _From, Reported) ->
+    {reply, ok, Reported}.
+
+handle_cast(_Request, Reported) ->
+    {noreply, Reported}.
+
+%% A process over a threshold can trigger an event on every garbage collection or schedule.
+handle_info({monitor, Subject, Event, Info}, Reported) ->
+    Now = erlang:monotonic_time(millisecond),
+    Recent = maps:filter(fun(_Key, At) -> Now - At < ?REPEAT_AFTER_MS end, Reported),
+    case maps:is_key({Event, Subject}, Recent) of
+        true ->
+            {noreply, Recent};
+        false ->
+            report(Event, Subject, Info),
+            {noreply, Recent#{{Event, Subject} => Now}}
+    end;
+handle_info(_Info, Reported) ->
+    {noreply, Reported}.
+
+report(Event, Subject, Info) ->
+    try subject_attributes(Subject) of
+        {Attributes, Links} ->
+            Tracer = opentelemetry:get_application_tracer(?MODULE),
+            SpanCtx = otel_tracer:start_span(otel_ctx:new(), Tracer,
+                                             <<"beam.process.", (atom_to_binary(Event))/binary>>,
+                                             #{attributes => maps:merge(Attributes, event_attributes(Event, Info)),
+                                               links => Links}),
+            _ = otel_span:end_span(SpanCtx),
+            ok;
+        undefined ->
+            ok
+    catch
+        _:_ -> ok
+    end.
+
+subject_attributes(Pid) when is_pid(Pid) ->
+    case erlang:process_info(Pid, [registered_name, initial_call, dictionary, memory,
+                                   message_queue_len, current_stacktrace]) of
+        [{registered_name, Name}, {initial_call, InitialCall}, {dictionary, Dictionary},
+         {memory, Memory}, {message_queue_len, QueueLen}, {current_stacktrace, Stacktrace}] ->
+            {(opentelemetry_beam_metrics:process_attributes(Name, InitialCall, Dictionary))#{
+                'beam.process.pid' => list_to_binary(pid_to_list(Pid)),
+                'beam.process.memory' => Memory,
+                'beam.process.message_queue_len' => QueueLen,
+                'code.stacktrace' => format_stacktrace(Stacktrace)},
+             opentelemetry:links([process_span_ctx(Dictionary)])};
+        undefined ->
+            undefined
+    end;
+subject_attributes(Port) when is_port(Port) ->
+    {port_attributes(Port), []}.
+
+event_attributes(long_gc, Info) ->
+    #{'beam.process.gc.duration' => proplists:get_value(timeout, Info)};
+event_attributes(long_schedule, Info) ->
+    maps:merge(#{'beam.process.schedule.duration' => proplists:get_value(timeout, Info)},
+               maps:from_list([{Key, format_location_mfa(Location)}
+                               || {Key, Location} <- [{'beam.process.schedule.in', proplists:get_value(in, Info)},
+                                                      {'beam.process.schedule.out', proplists:get_value(out, Info)}],
+                                  Location =/= undefined]));
+event_attributes(Busy, Port) when Busy =:= busy_port; Busy =:= busy_dist_port ->
+    port_attributes(Port);
+event_attributes(_, _) ->
+    #{}.
+
+port_attributes(Port) ->
+    Attributes = #{'beam.port.id' => list_to_binary(erlang:port_to_list(Port))},
+    case erlang:port_info(Port, name) of
+        {name, Name} -> Attributes#{'beam.port.name' => list_to_binary(Name)};
+        undefined -> Attributes
+    end.
+
+process_span_ctx(Dictionary) ->
+    case proplists:get_value('$__current_otel_ctx', Dictionary) of
+        undefined -> undefined;
+        Ctx -> otel_tracer:current_span_ctx(Ctx)
+    end.
+
+format_location_mfa({M, F, A}) ->
+    iolist_to_binary(io_lib:format("~ts:~ts/~b", [M, F, A]));
+format_location_mfa(Other) ->
+    iolist_to_binary(io_lib:format("~0p", [Other])).
+
+format_stacktrace(Stacktrace) ->
+    iolist_to_binary(lists:join($\n, [format_frame(Frame) || Frame <- Stacktrace])).
+
+format_frame({M, F, A, Location}) ->
+    Arity = case A of
+                N when is_integer(N) -> N;
+                Args -> length(Args)
+            end,
+    io_lib:format("~ts:~ts/~b~ts", [M, F, Arity, format_location(Location)]).
+
+format_location(Location) ->
+    case {proplists:get_value(file, Location), proplists:get_value(line, Location)} of
+        {File, Line} when File =/= undefined, Line =/= undefined -> io_lib:format(" (~ts:~b)", [File, Line]);
+        _ -> ""
+    end.

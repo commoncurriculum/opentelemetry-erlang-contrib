@@ -6,6 +6,8 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("stdlib/include/assert.hrl").
 -include_lib("opentelemetry_experimental/include/otel_metrics.hrl").
+-include_lib("opentelemetry_api/include/opentelemetry.hrl").
+-include_lib("opentelemetry/include/otel_span.hrl").
 
 all() ->
     [
@@ -13,7 +15,11 @@ all() ->
         memory_by_type_and_state,
         scheduler_utilization,
         longest_message_queue,
-        largest_process
+        persistent_terms,
+        large_heap,
+        long_gc,
+        long_schedule,
+        busy_port
     ].
 
 init_per_suite(Config) ->
@@ -84,23 +90,113 @@ longest_message_queue(_Config) ->
                  Attributes),
     ok.
 
-largest_process(_Config) ->
+persistent_terms(_Config) ->
+    persistent_term:put({?MODULE, persistent_terms}, lists:seq(1, 1000)),
+    Metrics = collect(),
+    persistent_term:erase({?MODULE, persistent_terms}),
+    ?assert(single_value('beam.persistent_term.count', Metrics) >= 1),
+    ?assert(single_value('beam.persistent_term.memory', Metrics) > 1000),
+    ok.
+
+large_heap(_Config) ->
+    start_system_monitor(large_heap_bytes, 20000000),
     Self = self(),
     Pid = spawn_link(fun() ->
                              true = register(opentelemetry_beam_large, self()),
-                             Big = lists:seq(1, 2000000),
-                             Self ! built,
+                             Parent = otel_tracer:start_span(opentelemetry:get_tracer(), <<"parent">>, #{}),
+                             otel_tracer:set_current_span(Parent),
+                             Self ! {parent, Parent},
+                             Big = lists:seq(1, 4000000),
                              receive stop -> length(Big) end
                      end),
-    receive built -> ok end,
-    {memory, Memory} = erlang:process_info(Pid, memory),
-    [{Max, Attributes}] = points('beam.process.memory.max', collect()),
+    Parent = receive {parent, P} -> P end,
+    {Attributes, Links} = receive_span(<<"beam.process.large_heap">>),
     Pid ! stop,
-    ?assert(Max >= Memory andalso Memory > 30000000, {Max, Memory}),
-    ?assertEqual(#{'beam.process.registered_name' => <<"opentelemetry_beam_large">>,
-                   'beam.process.initial_call' => <<"erlang:apply/2">>},
+    stop_system_monitor(large_heap_bytes),
+    ?assertEqual([{Parent#span_ctx.trace_id, Parent#span_ctx.span_id}],
+                 [{TraceId, SpanId} || #link{trace_id = TraceId, span_id = SpanId} <- Links]),
+    ?assertMatch(#{'beam.process.registered_name' := <<"opentelemetry_beam_large">>,
+                   'beam.process.initial_call' := <<"erlang:apply/2">>,
+                   'beam.process.message_queue_len' := 0},
                  Attributes),
+    ?assert(maps:get('beam.process.memory', Attributes) > 20000000),
+    ?assertEqual(list_to_binary(pid_to_list(Pid)), maps:get('beam.process.pid', Attributes)),
+    ?assertMatch(<<_/binary>>, maps:get('code.stacktrace', Attributes)),
     ok.
+
+long_gc(_Config) ->
+    start_system_monitor(long_gc_ms, 1),
+    Pid = spawn_link(fun() -> collect_large_heap(opentelemetry_beam_long_gc) end),
+    {Attributes, _} = receive_span(<<"beam.process.long_gc">>),
+    Pid ! stop,
+    stop_system_monitor(long_gc_ms),
+    ?assertMatch(#{'beam.process.registered_name' := <<"opentelemetry_beam_long_gc">>}, Attributes),
+    ?assert(maps:get('beam.process.gc.duration', Attributes) >= 1),
+    ok.
+
+long_schedule(_Config) ->
+    start_system_monitor(long_schedule_ms, 1),
+    Pid = spawn_link(fun() ->
+                             true = register(opentelemetry_beam_long_schedule, self()),
+                             Table = ets:new(?MODULE, []),
+                             true = ets:insert(Table, [{N} || N <- lists:seq(1, 3000000)]),
+                             receive stop -> ok end
+                     end),
+    {Attributes, _} = receive_span(<<"beam.process.long_schedule">>),
+    Pid ! stop,
+    stop_system_monitor(long_schedule_ms),
+    ?assertMatch(#{'beam.process.registered_name' := <<"opentelemetry_beam_long_schedule">>}, Attributes),
+    ?assert(maps:get('beam.process.schedule.duration', Attributes) >= 1),
+    ok.
+
+busy_port(_Config) ->
+    start_system_monitor(busy_port, true),
+    Self = self(),
+    Pid = spawn(fun() ->
+                        true = register(opentelemetry_beam_busy_port, self()),
+                        Port = open_port({spawn, "sleep 30"}, [binary, {busy_limits_port, {1024, 2048}}]),
+                        Self ! {port, Port},
+                        [port_command(Port, binary:copy(<<1>>, 100000)) || _ <- lists:seq(1, 10)]
+                end),
+    Port = receive {port, P} -> P end,
+    {Attributes, _} = receive_span(<<"beam.process.busy_port">>),
+    exit(Pid, kill),
+    catch port_close(Port),
+    stop_system_monitor(busy_port),
+    ?assertMatch(#{'beam.process.registered_name' := <<"opentelemetry_beam_busy_port">>,
+                   'beam.port.name' := <<"sleep 30">>},
+                 Attributes),
+    ?assertEqual(list_to_binary(erlang:port_to_list(Port)), maps:get('beam.port.id', Attributes)),
+    ok.
+
+collect_large_heap(Name) ->
+    true = register(Name, self()),
+    Big = lists:seq(1, 4000000),
+    erlang:garbage_collect(),
+    receive stop -> length(Big) end.
+
+start_system_monitor(Key, Value) ->
+    ok = application:stop(opentelemetry_beam),
+    ok = application:stop(opentelemetry_experimental),
+    ok = application:stop(opentelemetry),
+    application:set_env(opentelemetry_beam, Key, Value),
+    application:set_env(opentelemetry, processors,
+                        [{otel_simple_processor, #{exporter => {otel_exporter_pid, self()}}}]),
+    {ok, _} = application:ensure_all_started(opentelemetry_experimental),
+    {ok, _} = application:ensure_all_started(opentelemetry_beam).
+
+stop_system_monitor(Key) ->
+    ok = application:stop(opentelemetry_beam),
+    application:unset_env(opentelemetry_beam, Key),
+    {ok, _} = application:ensure_all_started(opentelemetry_beam).
+
+receive_span(Name) ->
+    receive
+        {span, #span{name = Name, attributes = Attributes, links = Links}} ->
+            {otel_attributes:map(Attributes), otel_links:list(Links)}
+    after 5000 ->
+            ct:fail({no_span, Name})
+    end.
 
 collect() ->
     otel_meter_server:force_flush(),
