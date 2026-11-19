@@ -351,6 +351,7 @@ defmodule OpentelemetryPhoenix do
     OpenTelemetry.Span.set_attribute(ctx, ErrorAttributes.error_type(), error_type)
     OpenTelemetry.Span.set_status(ctx, OpenTelemetry.status(:error, message))
     OpentelemetryTelemetry.end_telemetry_span(@tracer_id, meta)
+    Tracer.set_current_span(ctx)
   end
 
   defp channel_span_name(:join, channel, _event), do: "JOIN #{inspect(channel)}"

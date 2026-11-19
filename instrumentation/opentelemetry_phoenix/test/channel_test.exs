@@ -16,7 +16,11 @@ defmodule OpentelemetryPhoenix.ChannelTest do
 
   defmodule Context do
     def around(metadata, fun) do
-      send(metadata.socket.assigns.test, {:around, Map.delete(metadata, :socket)})
+      send(
+        metadata.socket.assigns.test,
+        {:around, Map.delete(metadata, :socket), OpenTelemetry.Tracer.current_span_ctx()}
+      )
+
       Process.put(:around_context, metadata.socket.assigns.context)
 
       try do
@@ -205,20 +209,35 @@ defmodule OpentelemetryPhoenix.ChannelTest do
     refute_received {:span, span(name: "JOIN OpentelemetryPhoenix.ChannelTest.RoomChannel")}
   end
 
-  test "around runs for every join, handle_in and handle_info, outside the span" do
+  test "around runs inside the span for join and handle_in, and alone for handle_info" do
     {:ok, _reply, socket} =
       UserSocket
       |> socket(nil, %{test: self(), context: "from the socket"})
       |> subscribe_and_join(ContextChannel, "context:1")
 
-    assert_receive {:around, %{channel: ContextChannel, topic: "context:1"}}
+    assert_receive {:around, %{channel: ContextChannel, topic: "context:1"}, join_span_ctx}
+    join_span_id = OpenTelemetry.Span.span_id(join_span_ctx)
+    assert_receive {:span, span(name: "JOIN " <> _, span_id: ^join_span_id)}
 
     ref = push(socket, "context", %{})
     assert_reply(ref, :ok, %{context: "from the socket"})
-    assert_receive {:around, %{channel: ContextChannel, topic: "context:1", event: "context"}}
+
+    assert_receive {:around, %{channel: ContextChannel, topic: "context:1", event: "context"}, handle_in_span_ctx}
+
+    handle_in_span_id = OpenTelemetry.Span.span_id(handle_in_span_ctx)
+    assert_receive {:span, span(name: "HANDLE_IN " <> _, span_id: ^handle_in_span_id)}
 
     send(socket.channel_pid, :context)
-    assert_receive {:around, %{channel: ContextChannel, message: :context}}
+    assert_receive {:around, %{channel: ContextChannel, message: :context}, :undefined}
     assert_receive {:handle_info_context, "from the socket"}
+  end
+
+  test "a failed callback's span stays current, so the crash report can link to its trace" do
+    socket = %Phoenix.Socket{handler: UserSocket, topic: "room:1"}
+
+    assert_raise RuntimeError, fn -> RoomChannel.handle_in("crash", %{}, socket) end
+    current_span_id = OpenTelemetry.Span.span_id(OpenTelemetry.Tracer.current_span_ctx())
+
+    assert_receive {:span, span(name: "HANDLE_IN " <> _, span_id: ^current_span_id)}
   end
 end
