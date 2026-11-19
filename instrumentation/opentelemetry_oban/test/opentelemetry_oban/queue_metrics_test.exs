@@ -63,9 +63,23 @@ defmodule OpentelemetryOban.QueueMetricsTest do
     assert counts == expected
 
     assert Map.keys(lags) == ["alpha", "beta", "gamma"]
-    assert lags["alpha"] >= 30 and lags["alpha"] < 40
-    assert lags["beta"] == 0
-    assert lags["gamma"] >= 10 and lags["gamma"] < 20
+    assert {alpha, true} = lags["alpha"]
+    assert alpha >= 30 and alpha < 40
+    assert lags["beta"] == {0, true}
+    assert {gamma, false} = lags["gamma"]
+    assert gamma >= 10 and gamma < 20
+  end
+
+  test "a resumed queue's lag is no longer marked paused" do
+    :ok = Oban.resume_queue(MetricsOban, queue: :beta)
+
+    lags = await_lags(&(&1["beta"] == {0, false}))
+    assert lags["alpha"] == {0, true}
+    assert lags["beta"] == {0, false}
+  end
+
+  test "reports nothing, and doesn't raise, when the Oban instance is gone" do
+    assert OpentelemetryOban.QueueMetrics.observe(NoSuchOban) == []
   end
 
   test "reports nothing from a node that isn't the leader" do
@@ -96,6 +110,18 @@ defmodule OpentelemetryOban.QueueMetricsTest do
     end
   end
 
+  # Resuming a queue reaches its producer through the notifier.
+  defp await_lags(done?, attempts \\ 50) do
+    {_counts, lags} = collect()
+
+    if done?.(lags) or attempts == 0 do
+      lags
+    else
+      Process.sleep(100)
+      await_lags(done?, attempts - 1)
+    end
+  end
+
   defp collect do
     :otel_meter_server.force_flush()
 
@@ -121,7 +147,9 @@ defmodule OpentelemetryOban.QueueMetricsTest do
     lags =
       Map.new(lag_points, fn point ->
         attributes = datapoint(point, :attributes)
-        {attributes[:"messaging.destination.name"], datapoint(point, :value)}
+
+        {attributes[:"messaging.destination.name"],
+         {datapoint(point, :value), attributes[:"oban.queue.paused"]}}
       end)
 
     {counts, lags}

@@ -14,8 +14,10 @@
   `opentelemetry_experimental` SDK is running.
 * Added the `queue_metrics: [name: oban_name]` option (off by default). It reports `oban.job.count`
   (jobs by `messaging.destination.name` and `oban.job.state`, from `Oban.Met`) and `oban.queue.lag`
-  (seconds since each queue's oldest available job became ready; 0 for a configured queue with
-  none waiting). Only the instance's leader reports. Needs the optional `:oban_met` dependency.
+  (seconds since each queue's oldest available job became ready; 0 for a queue any node runs with
+  none waiting; `oban.queue.paused` when every node running it has it paused). Only the
+  instance's leader reports. A failed read reports nothing for that export instead of crashing
+  the metric reader. Needs the optional `:oban_met` dependency.
 
 ### Fixed
 

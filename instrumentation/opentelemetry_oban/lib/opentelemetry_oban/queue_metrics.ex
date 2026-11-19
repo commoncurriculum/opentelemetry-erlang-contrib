@@ -40,12 +40,23 @@ defmodule OpentelemetryOban.QueueMetrics do
 
   # Every node sees the same jobs table, so only the leader reports.
   def observe(name) do
-    if Oban.Peer.leader?(name) do
-      conf = Oban.config(name)
-      [{@job_count, job_counts(name)}, {@queue_lag, queue_lags(conf)}]
+    if safely(fn -> Oban.Peer.leader?(name) end, false) do
+      [
+        {@job_count, safely(fn -> job_counts(name) end, [])},
+        {@queue_lag, safely(fn -> queue_lags(name) end, [])}
+      ]
     else
       []
     end
+  end
+
+  # A callback that raises crashes the metric reader, and repeated crashes stop every metric.
+  defp safely(fun, fallback) do
+    fun.()
+  rescue
+    _ -> fallback
+  catch
+    :exit, _ -> fallback
   end
 
   defp job_counts(name) do
@@ -61,13 +72,10 @@ defmodule OpentelemetryOban.QueueMetrics do
          }}
       end)
     end)
-  rescue
-    # Oban.Met starts its recorder after the Oban instance and raises until the recorder's
-    # tables exist.
-    RuntimeError -> []
   end
 
-  defp queue_lags(conf) do
+  defp queue_lags(name) do
+    conf = Oban.config(name)
     now = DateTime.utc_now()
 
     waiting =
@@ -77,21 +85,49 @@ defmodule OpentelemetryOban.QueueMetrics do
           where: job.state == "available",
           group_by: job.queue,
           select: {job.queue, min(job.scheduled_at)}
-        )
+        ),
+        timeout: 5_000
       )
       |> Map.new(fn {queue, scheduled_at} ->
         {queue, DateTime.diff(now, scheduled_at, :millisecond) / 1000}
       end)
 
-    conf.queues
-    |> Map.new(fn {queue, _options} -> {to_string(queue), 0} end)
+    paused = paused_by_queue(name, conf)
+
+    paused
+    |> Map.new(fn {queue, _paused} -> {queue, 0} end)
     |> Map.merge(waiting)
     |> Enum.map(fn {queue, lag} ->
       {lag,
        %{
          :"messaging.system.name" => :oban,
-         MessagingAttributes.messaging_destination_name() => queue
+         MessagingAttributes.messaging_destination_name() => queue,
+         "oban.queue.paused": Map.get(paused, queue, false)
        }}
     end)
+  end
+
+  # The queues any node runs, and whether each is paused on every node that runs it. This node's
+  # queues are checked directly; other nodes' come from the checks they gossip.
+  defp paused_by_queue(name, conf) do
+    local =
+      Enum.map(conf.queues, fn {queue, _options} ->
+        {to_string(queue), safely(fn -> Oban.check_queue(name, queue: queue).paused end, false)}
+      end)
+
+    others =
+      safely(
+        fn ->
+          name
+          |> Oban.Met.checks()
+          |> Enum.filter(&(&1["name"] == inspect(name) and &1["node"] != conf.node))
+          |> Enum.map(&{&1["queue"], &1["paused"] == true})
+        end,
+        []
+      )
+
+    (local ++ others)
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    |> Map.new(fn {queue, paused} -> {queue, Enum.all?(paused)} end)
   end
 end
