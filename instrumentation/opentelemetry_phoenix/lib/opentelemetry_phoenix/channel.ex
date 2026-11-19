@@ -24,18 +24,19 @@ defmodule OpentelemetryPhoenix.Channel do
       `handle_info/2` metadata has `:socket`, `:channel` and `:message`, and gets no span, since it
       runs once per broadcast for every subscriber.
 
-    * `:trace_carrier` - `{module, function}` called as `module.function(message)` with the payload
-      of `join/3` and `handle_in/3` and the message of `handle_info/2`. It returns the
-      `[{key, value}]` text map the message carries trace context in, or `[]`. Phoenix messages
-      have no headers, so where that context lives is the application's choice. The globally
-      configured propagator reads it, and the callback continues the trace it names: the span
-      for `join/3` and `handle_in/3` is its child, and `handle_info/2` runs in it.
+    * `:carrier` - `{module, function}` called as `module.function(message)` with the payload
+      of `join/3` and `handle_in/3` and the message of `handle_info/2`. It returns the message's
+      carrier, in the propagators API's sense: the `[{key, value}]` text map holding its trace
+      context, or `[]`. Phoenix messages have no headers, so where that context lives is the
+      application's choice. The globally configured propagator reads it, and the callback
+      continues the trace it names: the span for `join/3` and `handle_in/3` is its child, and
+      `handle_info/2` runs in it.
   """
 
   defmacro __using__(opts) do
     quote do
       @opentelemetry_phoenix_channel_around unquote(Keyword.get(opts, :around))
-      @opentelemetry_phoenix_channel_trace_carrier unquote(Keyword.get(opts, :trace_carrier))
+      @opentelemetry_phoenix_channel_carrier unquote(Keyword.get(opts, :carrier))
       @before_compile OpentelemetryPhoenix.Channel
     end
   end
@@ -65,7 +66,7 @@ defmodule OpentelemetryPhoenix.Channel do
 
   defmacro __before_compile__(env) do
     around = Module.get_attribute(env.module, :opentelemetry_phoenix_channel_around)
-    trace_carrier = Module.get_attribute(env.module, :opentelemetry_phoenix_channel_trace_carrier)
+    carrier = Module.get_attribute(env.module, :opentelemetry_phoenix_channel_carrier)
 
     [
       if Module.defines?(env.module, {:join, 3}) do
@@ -73,7 +74,7 @@ defmodule OpentelemetryPhoenix.Channel do
           defoverridable join: 3
 
           def join(topic, payload, socket) do
-            OpentelemetryPhoenix.Channel.continue_trace(unquote(trace_carrier), payload, fn ->
+            OpentelemetryPhoenix.Channel.continue_trace(unquote(carrier), payload, fn ->
               OpentelemetryPhoenix.Channel.span(
                 [:phoenix, :channel, :join],
                 unquote(around),
@@ -89,7 +90,7 @@ defmodule OpentelemetryPhoenix.Channel do
           defoverridable handle_in: 3
 
           def handle_in(event, payload, socket) do
-            OpentelemetryPhoenix.Channel.continue_trace(unquote(trace_carrier), payload, fn ->
+            OpentelemetryPhoenix.Channel.continue_trace(unquote(carrier), payload, fn ->
               OpentelemetryPhoenix.Channel.span(
                 [:phoenix, :channel, :handle_in],
                 unquote(around),
@@ -100,12 +101,12 @@ defmodule OpentelemetryPhoenix.Channel do
           end
         end
       end,
-      if (around || trace_carrier) && Module.defines?(env.module, {:handle_info, 2}) do
+      if (around || carrier) && Module.defines?(env.module, {:handle_info, 2}) do
         quote do
           defoverridable handle_info: 2
 
           def handle_info(message, socket) do
-            OpentelemetryPhoenix.Channel.continue_trace(unquote(trace_carrier), message, fn ->
+            OpentelemetryPhoenix.Channel.continue_trace(unquote(carrier), message, fn ->
               OpentelemetryPhoenix.Channel.around(
                 unquote(around),
                 %{socket: socket, channel: __MODULE__, message: message},

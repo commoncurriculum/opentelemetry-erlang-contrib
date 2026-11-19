@@ -71,14 +71,14 @@ defmodule OpentelemetryPhoenix.ChannelTest do
   end
 
   defmodule Carrier do
-    def trace_carrier(%{"meta" => meta}), do: Map.to_list(meta)
-    def trace_carrier({:traced, meta}), do: Map.to_list(meta)
-    def trace_carrier(_message), do: []
+    def carrier(%{"meta" => meta}), do: Map.to_list(meta)
+    def carrier({:traced, meta}), do: Map.to_list(meta)
+    def carrier(_message), do: []
   end
 
   defmodule TracedChannel do
     use Phoenix.Channel
-    use OpentelemetryPhoenix.Channel, trace_carrier: {Carrier, :trace_carrier}
+    use OpentelemetryPhoenix.Channel, carrier: {Carrier, :carrier}
 
     def join(_topic, _params, socket), do: {:ok, socket}
 
