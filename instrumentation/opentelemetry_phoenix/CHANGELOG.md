@@ -21,6 +21,11 @@
   The `around: {module, function}` option runs application code around every `join/3` and
   `handle_in/3`, inside its span, and every `handle_info/2`. Turn the spans off with
   `channel: false`. Addresses open-telemetry/opentelemetry-erlang-contrib#314.
+  The `trace_carrier: {module, function}` option lets a channel continue a trace its messages
+  carry: the function returns the text map a payload or `handle_info/2` message holds, and the
+  global propagator reads it. The event in span names and in `phoenix.channel.event` (spans and
+  `phoenix.channel.handle_in.duration`) is the `handle_in/3` clause that matched (`"ping"`,
+  `"admin-*"` for `"admin-" <> _`, otherwise `"_OTHER"`), so a client can't create names.
 
 * Added `OpentelemetryPhoenix.LiveView.assign_async/4` and `start_async/4`, which carry the
   caller's OpenTelemetry context into the async task (from

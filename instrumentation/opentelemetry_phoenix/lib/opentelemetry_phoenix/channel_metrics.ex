@@ -93,9 +93,15 @@ defmodule OpentelemetryPhoenix.ChannelMetrics do
       %{
         "phoenix.socket": inspect(socket.handler),
         "phoenix.channel": inspect(socket.channel),
-        "phoenix.channel.event": event
+        "phoenix.channel.event": event_name(socket.channel, event)
       }
     )
+  end
+
+  defp event_name(channel, event) do
+    if function_exported?(channel, :__opentelemetry_phoenix_event__, 1),
+      do: channel.__opentelemetry_phoenix_event__(event),
+      else: event
   end
 
   def observe(_args) do
