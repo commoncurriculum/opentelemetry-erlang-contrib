@@ -71,10 +71,12 @@ install_system_monitor(Options) ->
     end.
 
 %% Off-heap binaries only count toward max_heap_size, which reports through the logger on
-%% every garbage collection over the limit. The filter turns those events into spans
-%% instead of error log lines. The system default applies to processes spawned after this.
+%% every garbage collection over the limit. The filter adds a span and keeps the log line.
+%% The system default applies to processes spawned after this. A filter left behind by a
+%% killed predecessor would make adding ours fail.
 install_max_heap_size([{max_heap_size, Words}]) ->
-    ok = logger:add_primary_filter(?FILTER, {fun ?MODULE:max_heap_size_filter/2, {self(), Words}}),
+    _ = logger:remove_primary_filter(?FILTER),
+    _ = logger:add_primary_filter(?FILTER, {fun ?MODULE:max_heap_size_filter/2, {self(), Words}}),
     erlang:system_flag(max_heap_size, #{size => Words, kill => false, error_logger => true,
                                         include_shared_binaries => true});
 install_max_heap_size([]) ->
@@ -86,7 +88,7 @@ max_heap_size_filter(#{msg := {Format, [Pid, Words, _TotalHeapSize, false | _]}}
             ignore;
         _ ->
             Server ! {monitor, Pid, max_heap_size, Words},
-            stop
+            ignore
     end;
 max_heap_size_filter(_, _) ->
     ignore.
@@ -121,17 +123,19 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 report(Event, Subject, Info) ->
-    try subject_attributes(Subject) of
-        {Attributes, Links} ->
-            Tracer = opentelemetry:get_application_tracer(?MODULE),
-            SpanCtx = otel_tracer:start_span(otel_ctx:new(), Tracer,
-                                             <<"beam.process.", (atom_to_binary(Event))/binary>>,
-                                             #{attributes => maps:merge(Attributes, event_attributes(Event, Info)),
-                                               links => Links}),
-            _ = otel_span:end_span(SpanCtx),
-            ok;
-        undefined ->
-            ok
+    try
+        case subject_attributes(Subject) of
+            {Attributes, Links} ->
+                Tracer = opentelemetry:get_application_tracer(?MODULE),
+                SpanCtx = otel_tracer:start_span(otel_ctx:new(), Tracer,
+                                                 <<"beam.process.", (atom_to_binary(Event))/binary>>,
+                                                 #{attributes => maps:merge(Attributes, event_attributes(Event, Info)),
+                                                   links => Links}),
+                _ = otel_span:end_span(SpanCtx),
+                ok;
+            undefined ->
+                ok
+        end
     catch
         _:_ -> ok
     end.

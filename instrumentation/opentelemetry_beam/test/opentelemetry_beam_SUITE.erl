@@ -197,6 +197,7 @@ max_heap_size(_Config) ->
             {skip, include_shared_binaries_unsupported};
         true ->
             Before = erlang:system_info(max_heap_size),
+            ok = logger:add_handler(max_heap_size_test, ?MODULE, #{config => #{pid => self()}}),
             start_system_monitor(max_heap_size_bytes, 10000000),
             Pid = spawn_link(fun() ->
                                      true = register(opentelemetry_beam_binaries, self()),
@@ -205,6 +206,13 @@ max_heap_size(_Config) ->
                                      receive stop -> length(Binaries) end
                              end),
             {Attributes, _} = receive_span(<<"beam.process.max_heap_size">>),
+            receive
+                {logged, {Format, [Pid | _]}} ->
+                    ?assertNotEqual(nomatch, string:find(Format, "maximum heap size reached"))
+            after 5000 ->
+                    ct:fail(max_heap_size_not_logged)
+            end,
+            ok = logger:remove_handler(max_heap_size_test),
             Pid ! stop,
             stop_system_monitor(max_heap_size_bytes),
             ?assertMatch(#{'beam.process.registered_name' := <<"opentelemetry_beam_binaries">>,
@@ -216,6 +224,9 @@ max_heap_size(_Config) ->
             ?assertNot(lists:keymember(opentelemetry_beam_max_heap_size, 1, Filters)),
             ok
     end.
+
+log(#{msg := Msg}, #{config := #{pid := Pid}}) ->
+    Pid ! {logged, Msg}.
 
 collect_large_heap(Name) ->
     true = register(Name, self()),
