@@ -4,6 +4,11 @@
 
 ### Added
 
+* Added the `insert: []` option (off by default). Plain `Oban.insert/2` and `Oban.insert_all/2`
+  calls add an `oban.insert` event to the current span, and with Oban Pro loaded a global worker
+  hook writes the trace context into each job's meta, so jobs link to the trace that enqueued them
+  without the `OpentelemetryOban.insert` wrapper. Adds a dependency on
+  `opentelemetry_process_propagator`.
 * Trace Oban's engine, notifier and peer work (`oban.engine.fetch_jobs`, `oban.engine.complete_job`,
   `oban.peer.election`, ...) as internal spans, so the queries Oban makes have a parent span instead
   of each starting its own trace. Off by default, since Oban polls every queue on every node; turn it on with `internal: []`.
