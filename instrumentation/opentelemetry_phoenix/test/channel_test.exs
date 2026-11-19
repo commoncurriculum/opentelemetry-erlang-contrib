@@ -70,8 +70,34 @@ defmodule OpentelemetryPhoenix.ChannelTest do
     end
   end
 
+  defmodule Carrier do
+    def trace_carrier(%{"meta" => meta}), do: Map.to_list(meta)
+    def trace_carrier({:traced, meta}), do: Map.to_list(meta)
+    def trace_carrier(_message), do: []
+  end
+
+  defmodule TracedChannel do
+    use Phoenix.Channel
+    use OpentelemetryPhoenix.Channel, trace_carrier: {Carrier, :trace_carrier}
+
+    def join(_topic, _params, socket), do: {:ok, socket}
+
+    def handle_in("ping", _params, socket) do
+      OpenTelemetry.Tracer.with_span "inside handle_in" do
+        {:reply, :ok, socket}
+      end
+    end
+
+    def handle_info({:traced, _meta}, socket) do
+      send(socket.assigns.test, {:handle_info_span_ctx, OpenTelemetry.Tracer.current_span_ctx()})
+      {:noreply, socket}
+    end
+  end
+
   defmodule UserSocket do
     use Phoenix.Socket
+
+    channel("traced:*", TracedChannel)
 
     channel("room:*", RoomChannel)
     channel("private:*", RoomChannel)
@@ -239,5 +265,47 @@ defmodule OpentelemetryPhoenix.ChannelTest do
     current_span_id = OpenTelemetry.Span.span_id(OpenTelemetry.Tracer.current_span_ctx())
 
     assert_receive {:span, span(name: "HANDLE_IN " <> _, span_id: ^current_span_id)}
+  end
+
+  @trace_id 0x4BF92F3577B34DA6A3CE929D0E0E4736
+  @parent_span_id 0x00F067AA0BA902B7
+  @traceparent "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+  test "join and handle_in continue the trace their payload carries, and leave the process as it was" do
+    {:ok, _reply, socket} =
+      UserSocket
+      |> socket(nil, %{test: self()})
+      |> subscribe_and_join(TracedChannel, "traced:1", %{"meta" => %{"traceparent" => @traceparent}})
+
+    assert_receive {:span, span(name: "JOIN " <> _, trace_id: @trace_id, parent_span_id: @parent_span_id)}
+
+    ref = push(socket, "ping", %{"meta" => %{"traceparent" => @traceparent}})
+    assert_reply(ref, :ok)
+
+    assert_receive {:span,
+                    span(
+                      name: "HANDLE_IN OpentelemetryPhoenix.ChannelTest.TracedChannel#ping",
+                      trace_id: @trace_id,
+                      parent_span_id: @parent_span_id,
+                      span_id: handle_in_span_id
+                    )}
+
+    assert_receive {:span, span(name: "inside handle_in", trace_id: @trace_id, parent_span_id: ^handle_in_span_id)}
+
+    ref = push(socket, "ping", %{})
+    assert_reply(ref, :ok)
+
+    assert_receive {:span, span(name: "HANDLE_IN " <> _, trace_id: trace_id, parent_span_id: :undefined)}
+    refute trace_id == @trace_id
+  end
+
+  test "handle_info runs in the trace its message carries" do
+    {:ok, _reply, socket} = UserSocket |> socket(nil, %{test: self()}) |> subscribe_and_join(TracedChannel, "traced:1")
+
+    send(socket.channel_pid, {:traced, %{"traceparent" => @traceparent}})
+
+    assert_receive {:handle_info_span_ctx, span_ctx}
+    assert OpenTelemetry.Span.trace_id(span_ctx) == @trace_id
+    assert OpenTelemetry.Span.span_id(span_ctx) == @parent_span_id
   end
 end
