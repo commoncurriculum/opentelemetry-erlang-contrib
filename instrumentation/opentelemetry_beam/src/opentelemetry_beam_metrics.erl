@@ -7,7 +7,7 @@
 
 -module(opentelemetry_beam_metrics).
 
--export([setup/0, setup/1]).
+-export([setup/0, setup/1, process_attributes/3]).
 -ignore_xref([setup/0, setup/1, setup/2]).
 
 -include_lib("opentelemetry_api_experimental/include/otel_meter.hrl").
@@ -122,6 +122,17 @@ setup(Meter, Opts) ->
       fun(_) -> [{length(dets:all()), #{}}] end, [],
       #{description => <<"Erlang VM DETS Tables count.">>,
         unit => '{table}'}),
+
+    PersistentTermInstr =
+        [otel_meter:create_observable_gauge(
+           Meter, 'beam.persistent_term.count',
+           #{description => <<"The number of persistent terms.">>,
+             unit => '{term}'}),
+         otel_meter:create_observable_gauge(
+           Meter, 'beam.persistent_term.memory',
+           #{description => <<"Memory used by persistent terms.">>,
+             unit => 'By'})],
+    otel_meter:register_callback(Meter, PersistentTermInstr, fun persistent_term_metrics/1, []),
 
     MemAllocInstr =
         [otel_meter:create_observable_gauge(
@@ -268,18 +279,10 @@ setup(Meter, Opts) ->
 
     otel_meter:create_observable_gauge(
       Meter, 'beam.process.message_queue_len.max',
-      fun(_) -> process_max(message_queue_len) end, [],
+      fun message_queue_len_max/1, [],
       #{description => <<"The longest message queue of any process, with that "
                          "process's registered name and initial call.">>,
         unit => '{message}'}),
-
-    otel_meter:create_observable_gauge(
-      Meter, 'beam.process.memory.max',
-      fun(_) -> process_max(memory) end, [],
-      #{description => <<"The memory of the largest process, with that "
-                         "process's registered name and initial call.">>,
-        unit => 'By'}),
-
     otel_meter:create_observable_gauge(
       Meter, 'beam.scheduler.utilization',
       fun(_) -> [{opentelemetry_beam_scheduler:utilization(), #{}}] end, [],
@@ -377,6 +380,11 @@ dirty_run_queue_metrics(_) ->
         end
     catch _:_ -> []
     end.
+
+persistent_term_metrics(_) ->
+    #{count := Count, memory := Memory} = persistent_term:info(),
+    [{'beam.persistent_term.count', [{Count, #{}}]},
+     {'beam.persistent_term.memory', [{Memory, #{}}]}].
 
 vm_gc_stats(_) ->
     {NumberOfGCs, WordsReclaimed, _} = erlang:statistics(garbage_collection),
@@ -477,33 +485,36 @@ vm_memory_gauges(_) ->
        {?gv(ets, Data), #{'beam.memory.type' => ets}},
        {memory_other(Data), #{'beam.memory.type' => other}}]}].
 
-process_max(Item) ->
-    {Value, Largest} =
+message_queue_len_max(_) ->
+    {Length, Longest} =
         lists:foldl(
           fun(Pid, {Max, _} = Acc) ->
-                  case erlang:process_info(Pid, Item) of
-                      {Item, V} when V > Max -> {V, Pid};
+                  case erlang:process_info(Pid, message_queue_len) of
+                      {message_queue_len, Len} when Len > Max -> {Len, Pid};
                       _ -> Acc
                   end
           end, {0, undefined}, erlang:processes()),
-    [{Value, process_attributes(Largest)}].
+    [{Length, process_attributes(Longest)}].
 
 process_attributes(undefined) ->
     #{};
 process_attributes(Pid) ->
     case erlang:process_info(Pid, [registered_name, initial_call, dictionary]) of
         [{registered_name, Name}, {initial_call, InitialCall}, {dictionary, Dictionary}] ->
-            %% proc_lib processes all start in proc_lib:init_p/5 and keep their real
-            %% initial call in the process dictionary.
-            {M, F, A} = proplists:get_value('$initial_call', Dictionary, InitialCall),
-            Attributes = #{'beam.process.initial_call' =>
-                               iolist_to_binary(io_lib:format("~ts:~ts/~b", [M, F, A]))},
-            case Name of
-                [] -> Attributes;
-                _ -> Attributes#{'beam.process.registered_name' => atom_to_binary(Name)}
-            end;
+            process_attributes(Name, InitialCall, Dictionary);
         undefined ->
             #{}
+    end.
+
+process_attributes(Name, InitialCall, Dictionary) ->
+    %% proc_lib processes all start in proc_lib:init_p/5 and keep their real
+    %% initial call in the process dictionary.
+    {M, F, A} = proplists:get_value('$initial_call', Dictionary, InitialCall),
+    Attributes = #{'beam.process.initial_call' =>
+                       iolist_to_binary(io_lib:format("~ts:~ts/~b", [M, F, A]))},
+    case Name of
+        [] -> Attributes;
+        _ -> Attributes#{'beam.process.registered_name' => atom_to_binary(Name)}
     end.
 
 vm_msacc_counters(_) ->
