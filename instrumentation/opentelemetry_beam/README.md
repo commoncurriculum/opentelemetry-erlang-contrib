@@ -33,7 +33,7 @@ does not) and are skipped on one that doesn't. `max_heap_size_bytes` sets the VM
 `max_heap_size` (with `kill => false` and `include_shared_binaries => true`), which applies to
 processes spawned after the application starts; set `+hmax` (the same size, in words),
 `+hmaxk false` and `+hmaxib true` in `vm.args` to cover every process. The VM reports that limit as an error log line on each
-garbage collection over it; a primary logger filter turns those into the span and drops the line.
+garbage collection over it; a primary logger filter adds the span and leaves the line in the log.
 
 ```erlang
 {opentelemetry_beam, [{large_heap_bytes, 800000000}, {long_gc_ms, 200}, {long_schedule_ms, 200},
