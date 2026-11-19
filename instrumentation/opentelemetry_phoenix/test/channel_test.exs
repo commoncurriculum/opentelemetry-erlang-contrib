@@ -46,6 +46,8 @@ defmodule OpentelemetryPhoenix.ChannelTest do
     end
 
     def handle_in("crash", _params, _socket), do: raise("boom")
+    def handle_in("exit", _params, _socket), do: exit(:killed)
+    def handle_in("throw", _params, _socket), do: throw(:ball)
   end
 
   defmodule ContextChannel do
@@ -157,11 +159,38 @@ defmodule OpentelemetryPhoenix.ChannelTest do
     assert_receive {:span,
                     span(
                       name: "HANDLE_IN OpentelemetryPhoenix.ChannelTest.RoomChannel#crash",
-                      status: {:status, :error, ""},
+                      status: {:status, :error, "boom"},
+                      attributes: attributes,
                       events: events
                     )}
 
+    assert :otel_attributes.map(attributes)[:"error.type"] == "RuntimeError"
     assert [event(name: :exception)] = :otel_events.list(events)
+  end
+
+  test "a handle_in that exits or throws fails its span without an exception event" do
+    socket = %Phoenix.Socket{handler: UserSocket, topic: "room:1"}
+
+    assert catch_exit(RoomChannel.handle_in("exit", %{}, socket)) == :killed
+
+    assert_receive {:span,
+                    span(
+                      name: "HANDLE_IN OpentelemetryPhoenix.ChannelTest.RoomChannel#exit",
+                      status: {:status, :error, "exited: :killed"},
+                      attributes: attributes,
+                      events: events
+                    )}
+
+    assert :otel_attributes.map(attributes)[:"error.type"] == :_OTHER
+    assert [] == :otel_events.list(events)
+
+    assert catch_throw(RoomChannel.handle_in("throw", %{}, socket)) == :ball
+
+    assert_receive {:span,
+                    span(
+                      name: "HANDLE_IN OpentelemetryPhoenix.ChannelTest.RoomChannel#throw",
+                      status: {:status, :error, "thrown: :ball"}
+                    )}
   end
 
   test "no spans when channel tracing is off" do

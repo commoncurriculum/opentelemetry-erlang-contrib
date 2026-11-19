@@ -335,10 +335,21 @@ defmodule OpentelemetryPhoenix do
       ) do
     ctx = OpentelemetryTelemetry.set_current_telemetry_span(@tracer_id, meta)
 
-    exception = Exception.normalize(kind, reason, stacktrace)
+    {error_type, message} =
+      case Exception.normalize(kind, reason, stacktrace) do
+        %{__exception__: true} = exception ->
+          OpenTelemetry.Span.record_exception(ctx, exception, stacktrace, [])
+          {inspect(exception.__struct__), Exception.message(exception)}
 
-    OpenTelemetry.Span.record_exception(ctx, exception, stacktrace, [])
-    OpenTelemetry.Span.set_status(ctx, OpenTelemetry.status(:error, ""))
+        _reason when kind == :exit ->
+          {:_OTHER, "exited: #{inspect(reason)}"}
+
+        _reason ->
+          {:_OTHER, "thrown: #{inspect(reason)}"}
+      end
+
+    OpenTelemetry.Span.set_attribute(ctx, ErrorAttributes.error_type(), error_type)
+    OpenTelemetry.Span.set_status(ctx, OpenTelemetry.status(:error, message))
     OpentelemetryTelemetry.end_telemetry_span(@tracer_id, meta)
   end
 
