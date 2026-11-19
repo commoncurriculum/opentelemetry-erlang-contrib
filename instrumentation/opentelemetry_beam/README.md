@@ -4,9 +4,9 @@ Metrics collector to export statistics from the BEAM VM.
 
 The metrics and their names are heavily borrowed from [prometheus.erl](https://github.com/deadtrickster/prometheus.erl).
 
-It also reports `beam.node.count`, `beam.persistent_term.count`, `beam.persistent_term.memory`,
-`beam.process.message_queue_len.max` (with that process's `beam.process.registered_name` and
-`beam.process.initial_call`) and `beam.scheduler.utilization`.
+It also reports `beam.node.count`, `beam.persistent_term.count`, `beam.persistent_term.memory`
+and `beam.scheduler.utilization`. No metric visits every process; the system monitor below names
+the processes that cross a threshold.
 
 ## System monitor spans
 

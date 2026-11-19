@@ -9,9 +9,6 @@
   garbage collection, port I/O, context switch and reduction metrics, and opt-in microstate
   accounting and CPU time.
 * `beam.node.count`: nodes in the cluster, this one included.
-* `beam.process.message_queue_len.max`: the longest message queue of any process, with
-  `beam.process.registered_name` and `beam.process.initial_call` (the `proc_lib` initial call
-  when the process has one).
 * `beam.scheduler.utilization`: share of time the normal and dirty CPU schedulers were busy
   since the previous observation. The application supervises the process that keeps
   `scheduler_wall_time` on and holds the previous sample.
