@@ -11,6 +11,17 @@
 
 ### Features
 
+* Channel spans. `use OpentelemetryPhoenix.Channel` in a channel emits
+  `[:phoenix, :channel, :join | :handle_in, :start | :stop | :exception]` telemetry around
+  `join/3` and `handle_in/3`, and `setup/1` turns them into `JOIN MyAppWeb.RoomChannel` and
+  `HANDLE_IN MyAppWeb.RoomChannel#event` server spans that parent the callback's work, with
+  `phoenix.socket`, `phoenix.channel` and `phoenix.channel.event`. Phoenix itself only reports
+  these callbacks after they return. A failed callback sets `error.type` and stays the current
+  span, since the channel process crashes next and its crash report can then link to the trace.
+  The `around: {module, function}` option runs application code around every `join/3` and
+  `handle_in/3`, inside its span, and every `handle_info/2`. Turn the spans off with
+  `channel: false`. Addresses open-telemetry/opentelemetry-erlang-contrib#314.
+
 * Added `OpentelemetryPhoenix.LiveView.assign_async/4` and `start_async/4`, which carry the
   caller's OpenTelemetry context into the async task (from
   open-telemetry/opentelemetry-erlang-contrib#439). `phoenix`, `phoenix_html` and

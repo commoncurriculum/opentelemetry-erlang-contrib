@@ -22,6 +22,15 @@ defmodule OpentelemetryPhoenix do
                       default: true,
                       doc: "Whether controller render traces will be instrumented."
                     ],
+                    channel: [
+                      type: :boolean,
+                      default: true,
+                      doc: """
+                      Whether channel traces will be instrumented. Spans come only from channels that
+                      `use OpentelemetryPhoenix.Channel`, since Phoenix emits no event before a channel
+                      callback runs.
+                      """
+                    ],
                     liveview_span_names: [
                       type: {:in, [:module, :route]},
                       default: :module,
@@ -129,8 +138,16 @@ defmodule OpentelemetryPhoenix do
 
   @typedoc "Setup options"
   @type opts :: [
-          endpoint_prefix() | adapter() | liveview() | controller() | liveview_span_names()
+          endpoint_prefix()
+          | adapter()
+          | liveview()
+          | controller()
+          | channel()
+          | liveview_span_names()
         ]
+
+  @typedoc "Attach channel handlers. Optional"
+  @type channel :: {:channel, boolean()}
 
   @typedoc "The endpoint prefix in your endpoint. Defaults to `[:phoenix, :endpoint]`"
   @type endpoint_prefix :: {:endpoint_prefix, [atom()]}
@@ -165,6 +182,10 @@ defmodule OpentelemetryPhoenix do
 
     if opts[:controller] do
       attach_controller_render_handlers()
+    end
+
+    if opts[:channel] do
+      attach_channel_handlers()
     end
 
     :ok
@@ -259,6 +280,82 @@ defmodule OpentelemetryPhoenix do
 
     :ok
   end
+
+  @doc false
+  def attach_channel_handlers do
+    :telemetry.attach_many(
+      {__MODULE__, :channel},
+      [
+        [:phoenix, :channel, :join, :start],
+        [:phoenix, :channel, :join, :stop],
+        [:phoenix, :channel, :join, :exception],
+        [:phoenix, :channel, :handle_in, :start],
+        [:phoenix, :channel, :handle_in, :stop],
+        [:phoenix, :channel, :handle_in, :exception]
+      ],
+      &__MODULE__.handle_channel_event/4,
+      %{}
+    )
+
+    :ok
+  end
+
+  @doc false
+  def handle_channel_event(
+        [:phoenix, :channel, callback, :start],
+        _measurements,
+        %{socket: socket, channel: channel} = meta,
+        _config
+      ) do
+    attributes =
+      %{
+        :"phoenix.socket" => inspect(socket.handler),
+        :"phoenix.channel" => inspect(channel),
+        :"phoenix.channel.event" => meta[:event]
+      }
+      |> Map.reject(fn {_key, value} -> is_nil(value) end)
+
+    OpentelemetryTelemetry.start_telemetry_span(
+      @tracer_id,
+      channel_span_name(callback, channel, meta[:event]),
+      meta,
+      %{kind: :server, attributes: attributes}
+    )
+  end
+
+  def handle_channel_event([:phoenix, :channel, _callback, :stop], _measurements, meta, _config) do
+    OpentelemetryTelemetry.end_telemetry_span(@tracer_id, meta)
+  end
+
+  def handle_channel_event(
+        [:phoenix, :channel, _callback, :exception],
+        _measurements,
+        %{kind: kind, reason: reason, stacktrace: stacktrace} = meta,
+        _config
+      ) do
+    ctx = OpentelemetryTelemetry.set_current_telemetry_span(@tracer_id, meta)
+
+    {error_type, message} =
+      case Exception.normalize(kind, reason, stacktrace) do
+        %{__exception__: true} = exception ->
+          OpenTelemetry.Span.record_exception(ctx, exception, stacktrace, [])
+          {inspect(exception.__struct__), Exception.message(exception)}
+
+        _reason when kind == :exit ->
+          {:_OTHER, "exited: #{inspect(reason)}"}
+
+        _reason ->
+          {:_OTHER, "thrown: #{inspect(reason)}"}
+      end
+
+    OpenTelemetry.Span.set_attribute(ctx, ErrorAttributes.error_type(), error_type)
+    OpenTelemetry.Span.set_status(ctx, OpenTelemetry.status(:error, message))
+    OpentelemetryTelemetry.end_telemetry_span(@tracer_id, meta)
+    Tracer.set_current_span(ctx)
+  end
+
+  defp channel_span_name(:join, channel, _event), do: "JOIN #{inspect(channel)}"
+  defp channel_span_name(:handle_in, channel, event), do: "HANDLE_IN #{inspect(channel)}##{event}"
 
   # TODO: do we still need exception handling? Only when cowboy?
 
