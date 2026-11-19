@@ -76,8 +76,10 @@ defmodule OpentelemetryOban do
       doc: """
       Reports `oban.job.count` (jobs by queue and `oban.job.state`, from `Oban.Met`) and
       `oban.queue.lag` (seconds since each queue's oldest available job became ready; 0 for a
-      configured queue with none waiting) for one Oban instance, such as `[name: Oban]`. Only the
-      instance's leader reports, since every node sees the same jobs table. Needs the `:oban_met`
+      queue any node runs with none waiting; `oban.queue.paused` is true when every node running
+      the queue has it paused) for one Oban instance, such as `[name: Oban]`. Only the
+      instance's leader reports, since every node sees the same jobs table. A failed read, such as
+      a database timeout, reports nothing for that export instead of raising. Needs the `:oban_met`
       dependency.
       """
     ]
