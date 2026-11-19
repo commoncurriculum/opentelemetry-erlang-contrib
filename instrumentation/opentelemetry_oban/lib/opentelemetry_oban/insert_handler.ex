@@ -4,7 +4,6 @@ defmodule OpentelemetryOban.InsertHandler do
   alias OpenTelemetry.SemConv.Incubating.MessagingAttributes
 
   require Logger
-  require OpenTelemetry.Tracer
 
   def attach() do
     :telemetry.attach_many(
