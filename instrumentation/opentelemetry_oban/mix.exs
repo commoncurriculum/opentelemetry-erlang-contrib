@@ -56,6 +56,7 @@ defmodule OpentelemetryOban.MixProject do
       {:opentelemetry_api, "~> 1.4"},
       {:opentelemetry_api_experimental, "~> 0.6.0"},
       {:opentelemetry_telemetry, "~> 1.1"},
+      {:opentelemetry_process_propagator, "~> 0.3"},
       {:opentelemetry_semantic_conventions, "~> 1.27"},
       {:opentelemetry, "== 1.7.0", only: [:test]},
       {:opentelemetry_experimental, "== 0.6.0", only: [:test]},

@@ -33,6 +33,8 @@ defmodule OpentelemetryOban do
 
   @type internal_options() :: [] | :disabled
 
+  @type insert_options() :: [] | :disabled
+
   @options_schema [
     job: [
       type:
@@ -61,6 +63,18 @@ defmodule OpentelemetryOban do
       Internal handler configuration. Traces Oban's engine, notifier and peer work, such as
       fetching, staging and acknowledging jobs, so the queries it makes have a parent span.
       Off by default, because Oban polls every queue on every node; set to `[]` to turn it on.
+      """
+    ],
+    insert: [
+      type: {:in, [[], :disabled]},
+      type_spec: quote(do: insert_options()),
+      default: :disabled,
+      doc: """
+      Traces inserts made with plain `Oban.insert/2` and `Oban.insert_all/2`, so callers need no
+      wrapper. Each inserted job adds an `oban.insert` event to the current span. With Oban Pro
+      loaded, a global worker hook also writes the current trace context into the job's meta, so
+      the job's `process` span links to the trace that enqueued it; a process with no span of its
+      own uses its `$callers`' context. Set to `[]` to turn it on.
       """
     ],
     queue_metrics: [
@@ -117,6 +131,10 @@ defmodule OpentelemetryOban do
 
     if opts.internal != :disabled do
       OpentelemetryOban.InternalHandler.attach()
+    end
+
+    if opts.insert != :disabled do
+      OpentelemetryOban.InsertHandler.attach()
     end
 
     if opts.queue_metrics != :disabled do
