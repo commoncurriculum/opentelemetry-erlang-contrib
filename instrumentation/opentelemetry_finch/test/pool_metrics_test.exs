@@ -12,7 +12,10 @@ defmodule OpentelemetryFinch.PoolMetricsTest do
 
   setup do
     bypass = Bypass.open()
-    configured = Bypass.open()
+
+    # The instrument and its pools outlive the test that first creates them, so the configured pool's
+    # URL has to be the same in every test.
+    configured = Bypass.open(port: 47_513)
     configured_url = "http://localhost:#{configured.port}"
 
     start_supervised!(
@@ -68,6 +71,21 @@ defmodule OpentelemetryFinch.PoolMetricsTest do
     Enum.each(requests, &({:ok, %{status: 200}} = Task.await(&1)))
 
     assert open_connections() == %{bypass.port => 0, configured.port => 0}
+  end
+
+  test "observes nothing, and logs no error, while the Finch instance isn't running" do
+    stop_supervised!(MetricsFinch)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        :otel_meter_server.force_flush()
+
+        assert_receive {:otel_metric,
+                        metric(name: :"http.client.open_connections", data: sum(datapoints: []))},
+                       1_000
+      end)
+
+    refute log =~ "unknown registry"
   end
 
   defp open_connections do

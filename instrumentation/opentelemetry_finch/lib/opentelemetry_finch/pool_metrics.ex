@@ -41,17 +41,16 @@ defmodule OpentelemetryFinch.PoolMetrics do
     end)
   end
 
-  defp pool_status(name, :default) do
-    case Finch.get_pool_status(name, :default) do
-      {:ok, pools} -> Enum.to_list(pools)
-      {:error, :not_found} -> []
+  # Collection runs in the metric reader, which outlives the Finch instance: it starts before the
+  # application's supervisor starts Finch and keeps collecting while it shuts down. Finch's registry
+  # raises ArgumentError while it isn't running.
+  defp pool_status(name, pool) do
+    case {pool, Finch.get_pool_status(name, pool)} do
+      {:default, {:ok, pools}} -> Enum.to_list(pools)
+      {url, {:ok, shards}} -> [{Finch.Pool.new(url), shards}]
+      {_pool, {:error, :not_found}} -> []
     end
-  end
-
-  defp pool_status(name, url) do
-    case Finch.get_pool_status(name, url) do
-      {:ok, shards} -> [{Finch.Pool.new(url), shards}]
-      {:error, :not_found} -> []
-    end
+  rescue
+    ArgumentError -> []
   end
 end
