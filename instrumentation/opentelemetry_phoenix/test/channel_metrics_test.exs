@@ -21,18 +21,9 @@ defmodule OpentelemetryPhoenix.ChannelMetricsTest do
     def handle_in("ping", _params, socket), do: {:reply, :ok, socket}
   end
 
-  defmodule TracedChannel do
-    use Phoenix.Channel
-    use OpentelemetryPhoenix.Channel
-
-    def join(_topic, _params, socket), do: {:ok, socket}
-    def handle_in(_event, _params, socket), do: {:reply, :ok, socket}
-  end
-
   defmodule UserSocket do
     use Phoenix.Socket
 
-    channel("traced:*", TracedChannel)
     channel("room:*", RoomChannel)
     channel("private:*", RoomChannel)
 
@@ -125,25 +116,6 @@ defmodule OpentelemetryPhoenix.ChannelMetricsTest do
              "phoenix.channel": inspect(RoomChannel),
              "phoenix.channel.event": "ping"
            }
-  end
-
-  test "a traced channel records the event its clauses name, so a client can't add attribute values" do
-    {:ok, _reply, socket} = UserSocket |> socket(nil, %{}) |> subscribe_and_join(TracedChannel, "traced:1")
-
-    for event <- ["made-up-1", "made-up-2"] do
-      ref = push(socket, event, %{})
-      assert_reply(ref, :ok)
-    end
-
-    :otel_meter_server.force_flush()
-
-    assert_receive {:otel_metric,
-                    metric(
-                      name: :"phoenix.channel.handle_in.duration",
-                      data: histogram(datapoints: [histogram_datapoint(attributes: attributes, count: 2)])
-                    )}
-
-    assert attributes[:"phoenix.channel.event"] == "_OTHER"
   end
 
   defp expected_counts(channels) do

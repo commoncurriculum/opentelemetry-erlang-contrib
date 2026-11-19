@@ -12,11 +12,6 @@ defmodule OpentelemetryPhoenix.Channel do
     * `[:phoenix, :channel, :join]` - metadata `:socket`, `:channel` and `:topic`.
     * `[:phoenix, :channel, :handle_in]` - metadata `:socket`, `:channel`, `:topic` and `:event`.
 
-  A client chooses the event it pushes, so `:event` is not the raw string: it is the
-  `handle_in/3` clause that matches it. A clause for `"ping"` gives `"ping"`, a clause for
-  `"admin-" <> _` gives `"admin-*"`, and an event no clause names gives `"_OTHER"`. Span names
-  and the `phoenix.channel.event` attribute on spans and metrics use it.
-
   An exception, exit or throw that escapes the callback crashes the channel process, so the
   failed span stays current: the crash report that follows can link to its trace.
 
@@ -68,25 +63,6 @@ defmodule OpentelemetryPhoenix.Channel do
     result
   end
 
-  @doc false
-  def event_clauses(module) do
-    case Module.get_definition(module, {:handle_in, 3}) do
-      {:v1, _kind, _meta, clauses} -> Enum.flat_map(clauses, fn {_, [event | _], _, _} -> event_clause(event) end)
-      nil -> []
-    end
-    |> Enum.uniq()
-    |> Enum.concat([quote(do: def(__opentelemetry_phoenix_event__(_event), do: "_OTHER"))])
-  end
-
-  defp event_clause(event) when is_binary(event),
-    do: [quote(do: def(__opentelemetry_phoenix_event__(unquote(event)), do: unquote(event)))]
-
-  defp event_clause({:<<>>, _, [{:"::", _, [prefix, {:binary, _, _}]} | _]}) when is_binary(prefix),
-    do: [quote(do: def(__opentelemetry_phoenix_event__(unquote(prefix) <> _), do: unquote(prefix <> "*")))]
-
-  defp event_clause({:=, _, sides}), do: Enum.flat_map(sides, &event_clause/1)
-  defp event_clause(_), do: []
-
   defmacro __before_compile__(env) do
     around = Module.get_attribute(env.module, :opentelemetry_phoenix_channel_around)
     trace_carrier = Module.get_attribute(env.module, :opentelemetry_phoenix_channel_trace_carrier)
@@ -112,20 +88,12 @@ defmodule OpentelemetryPhoenix.Channel do
         quote do
           defoverridable handle_in: 3
 
-          @doc false
-          unquote_splicing(event_clauses(env.module))
-
           def handle_in(event, payload, socket) do
             OpentelemetryPhoenix.Channel.continue_trace(unquote(trace_carrier), payload, fn ->
               OpentelemetryPhoenix.Channel.span(
                 [:phoenix, :channel, :handle_in],
                 unquote(around),
-                %{
-                  socket: socket,
-                  channel: __MODULE__,
-                  topic: socket.topic,
-                  event: __opentelemetry_phoenix_event__(event)
-                },
+                %{socket: socket, channel: __MODULE__, topic: socket.topic, event: event},
                 fn -> super(event, payload, socket) end
               )
             end)

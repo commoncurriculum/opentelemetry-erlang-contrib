@@ -49,11 +49,9 @@ defmodule OpentelemetryPhoenix.ChannelTest do
       end
     end
 
-    def handle_in("admin-" <> _action, _params, socket), do: {:reply, :ok, socket}
     def handle_in("crash", _params, _socket), do: raise("boom")
     def handle_in("exit", _params, _socket), do: exit(:killed)
     def handle_in("throw", _params, _socket), do: throw(:ball)
-    def handle_in(_event, _params, socket), do: {:reply, :ok, socket}
   end
 
   defmodule ContextChannel do
@@ -267,25 +265,6 @@ defmodule OpentelemetryPhoenix.ChannelTest do
     current_span_id = OpenTelemetry.Span.span_id(OpenTelemetry.Tracer.current_span_ctx())
 
     assert_receive {:span, span(name: "HANDLE_IN " <> _, span_id: ^current_span_id)}
-  end
-
-  test "a handle_in span is named after the clause that matches the event, never the raw event" do
-    {:ok, _reply, socket} = UserSocket |> socket(nil, %{}) |> subscribe_and_join(RoomChannel, "room:1")
-
-    for event <- ["admin-delete-user", "made-up"] do
-      ref = push(socket, event, %{})
-      assert_reply(ref, :ok)
-    end
-
-    assert_receive {:span,
-                    span(name: "HANDLE_IN OpentelemetryPhoenix.ChannelTest.RoomChannel#admin-*", attributes: admin)}
-
-    assert :otel_attributes.map(admin)[:"phoenix.channel.event"] == "admin-*"
-
-    assert_receive {:span,
-                    span(name: "HANDLE_IN OpentelemetryPhoenix.ChannelTest.RoomChannel#_OTHER", attributes: other)}
-
-    assert :otel_attributes.map(other)[:"phoenix.channel.event"] == "_OTHER"
   end
 
   @trace_id 0x4BF92F3577B34DA6A3CE929D0E0E4736
