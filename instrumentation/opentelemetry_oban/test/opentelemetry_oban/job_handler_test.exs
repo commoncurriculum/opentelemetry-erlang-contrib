@@ -49,6 +49,47 @@ defmodule OpentelemetryOban.JobHandlerTest do
     end
   end
 
+  describe "measurements" do
+    setup do
+      setup_otel()
+      OpentelemetryOban.setup()
+      :ok
+    end
+
+    test "a job event with only a duration still ends the span, and the handler stays attached" do
+      job = %Oban.Job{
+        id: 1,
+        queue: "events",
+        worker: "TestJob",
+        priority: 0,
+        attempt: 1,
+        max_attempts: 1,
+        meta: %{}
+      }
+
+      for event <- [:stop, :exception] do
+        metadata = %{
+          job: job,
+          kind: :error,
+          reason: %RuntimeError{message: "boom"},
+          stacktrace: []
+        }
+
+        :telemetry.execute([:oban, :job, :start], %{system_time: System.system_time()}, metadata)
+        :telemetry.execute([:oban, :job, event], %{duration: 1_000}, metadata)
+
+        assert_receive {:span, span(name: "process events", attributes: attributes)}
+        attrs = :otel_attributes.map(attributes)
+        assert Map.has_key?(attrs, :"oban.job.duration_us")
+        refute Map.has_key?(attrs, :"oban.job.queue_time_us")
+      end
+
+      handler_ids = Enum.map(:telemetry.list_handlers([:oban, :job]), & &1.id)
+      assert "#{OpentelemetryOban.JobHandler}.job_stop" in handler_ids
+      assert "#{OpentelemetryOban.JobHandler}.job_exception" in handler_ids
+    end
+  end
+
   describe "span_relationship: :child" do
     setup do
       setup_otel()
