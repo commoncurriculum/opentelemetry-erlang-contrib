@@ -87,16 +87,8 @@ defmodule OpentelemetryCh do
   """
   @spec setup(opts()) :: :ok
   def setup(opts \\ []) do
-    opts = NimbleOptions.validate!(opts, @options_schema)
-    :otel_db_client.attach(__MODULE__, @events, %{query_text: query_text_mode(opts)})
-  end
-
-  defp query_text_mode(opts) do
-    cond do
-      DBAttributes.db_query_text() in opts[:opt_out_attrs] -> :disabled
-      opts[:query_sanitization] -> :obfuscated
-      true -> :plain
-    end
+    opts = opts |> NimbleOptions.validate!(@options_schema) |> Map.new()
+    :otel_db_client.attach(__MODULE__, @events, %{query_text: :otel_db_query_text.mode(opts)})
   end
 
   @doc false
