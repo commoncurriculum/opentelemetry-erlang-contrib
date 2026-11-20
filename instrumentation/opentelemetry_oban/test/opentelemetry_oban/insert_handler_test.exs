@@ -77,6 +77,25 @@ defmodule OpentelemetryOban.InsertHandlerTest do
              :otel_attributes.map(attributes)
   end
 
+  test "with the internal handler on too, an insert's work is its send span and the caller stays current" do
+    TestHelpers.remove_oban_handlers()
+    OpentelemetryOban.setup(insert: [], internal: [])
+
+    OpenTelemetry.Tracer.with_span "caller" do
+      caller = OpenTelemetry.Tracer.current_span_ctx()
+      Oban.insert(TestJob.new(%{}))
+      assert OpenTelemetry.Tracer.current_span_ctx() == caller
+      Oban.insert_all([TestJob.new(%{})])
+      assert OpenTelemetry.Tracer.current_span_ctx() == caller
+    end
+
+    assert_receive {:span, span(name: "caller", span_id: caller_span_id)}
+    assert_receive {:span, span(name: "send events", parent_span_id: ^caller_span_id)}
+    assert_receive {:span, span(name: "send", parent_span_id: ^caller_span_id)}
+    refute_receive {:span, span(name: "oban.engine.insert_job")}
+    refute_receive {:span, span(name: "oban.engine.insert_all_jobs")}
+  end
+
   test "inserts record no span unless insert is turned on" do
     TestHelpers.remove_oban_handlers()
     OpentelemetryOban.setup()
