@@ -80,7 +80,7 @@ defmodule OpentelemetryOban.InternalHandler do
   end
 
   defp attributes(metadata) do
-    %{MessagingAttributes.messaging_system() => :oban}
+    %{:"messaging.system.name" => :oban}
     |> put_queue(metadata)
   end
 

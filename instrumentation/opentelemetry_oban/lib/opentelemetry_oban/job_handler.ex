@@ -128,7 +128,7 @@ defmodule OpentelemetryOban.JobHandler do
 
     attributes =
       %{
-        MessagingAttributes.messaging_system() => :oban,
+        :"messaging.system.name" => :oban,
         MessagingAttributes.messaging_operation_name() => "process",
         MessagingAttributes.messaging_message_id() => id,
         MessagingAttributes.messaging_client_id() => worker,
