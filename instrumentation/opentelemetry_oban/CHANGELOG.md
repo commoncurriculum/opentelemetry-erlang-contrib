@@ -5,7 +5,9 @@
 ### Added
 
 * Added the `insert: []` option (off by default). Plain `Oban.insert/2` and `Oban.insert_all/2`
-  calls add an `oban.insert` event to the current span, and with Oban Pro loaded a global worker
+  calls record the same producer span `OpentelemetryOban.insert` does (`send <queue>`, or `send`
+  with `messaging.batch.message_count` for `insert_all`), from Oban's
+  `[:oban, :engine, :insert_job | :insert_all_jobs]` telemetry. With Oban Pro loaded, a global worker
   hook writes the trace context into each job's meta, so jobs link to the trace that enqueued them
   without the `OpentelemetryOban.insert` wrapper. Adds a dependency on
   `opentelemetry_process_propagator`.
@@ -23,6 +25,11 @@
   none waiting; `oban.queue.paused` when every node running it has it paused). Only the
   instance's leader reports. A failed read reports nothing for that export instead of crashing
   the metric reader. Needs the optional `:oban_met` dependency.
+
+### Changed
+
+* Spans use `messaging.system.name` instead of `messaging.system`, which semantic conventions
+  deprecate in its favor. The queue metrics and `messaging.process.duration` already did.
 
 ### Fixed
 

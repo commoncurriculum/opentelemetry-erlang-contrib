@@ -54,7 +54,7 @@ defmodule OpentelemetryObanTest do
              "messaging.message.id": ^id,
              "messaging.client.id": "TestJob",
              "messaging.operation.type": :create,
-             "messaging.system": :oban
+             "messaging.system.name": :oban
            } = :otel_attributes.map(attributes)
   end
 
@@ -166,7 +166,7 @@ defmodule OpentelemetryObanTest do
              "messaging.message.id": ^id,
              "messaging.client.id": "TestJob",
              "messaging.operation.type": :process,
-             "messaging.system": :oban
+             "messaging.system.name": :oban
            } = attrs
 
     refute Map.has_key?(attrs, :"oban.job.workflow_id")
@@ -217,7 +217,7 @@ defmodule OpentelemetryObanTest do
              "messaging.destination.name": "events",
              "messaging.operation.name": "process",
              "messaging.operation.type": :process,
-             "messaging.system": :oban,
+             "messaging.system.name": :oban,
              "messaging.message.id": ^id,
              "messaging.client.id": "TestJobThatReturnsError",
              "error.type": "Oban.PerformError"
@@ -302,7 +302,7 @@ defmodule OpentelemetryObanTest do
              "messaging.operation.type": :process,
              "messaging.message.id": ^id,
              "messaging.client.id": "TestJobThatRaisesException",
-             "messaging.system": :oban,
+             "messaging.system.name": :oban,
              "error.type": "UndefinedFunctionError"
            } = attrs
 
@@ -347,7 +347,7 @@ defmodule OpentelemetryObanTest do
              "messaging.operation.type": :process,
              "messaging.message.id": ^id,
              "messaging.client.id": "TestJobThatThrowsValue",
-             "messaging.system": :oban,
+             "messaging.system.name": :oban,
              "error.type": "Oban.CrashError"
            } = attrs
 
@@ -395,7 +395,7 @@ defmodule OpentelemetryObanTest do
              "messaging.operation.type": :process,
              "messaging.message.id": ^id,
              "messaging.client.id": "TestJobThatExitsAbnormally",
-             "messaging.system": :oban,
+             "messaging.system.name": :oban,
              "error.type": "Oban.CrashError"
            } = attrs
 
@@ -496,7 +496,7 @@ defmodule OpentelemetryObanTest do
     send_attrs = :otel_attributes.map(send_attributes)
 
     assert %{
-             "messaging.system": :oban,
+             "messaging.system.name": :oban,
              "messaging.operation.name": "send",
              "messaging.operation.type": :create,
              "messaging.batch.message_count": 2

@@ -28,33 +28,56 @@ defmodule OpentelemetryOban.InsertHandlerTest do
     :ok
   end
 
-  test "a plain Oban.insert adds an oban.insert event to the current span" do
+  test "a plain Oban.insert records a send producer span under the current span" do
     {:ok, job} =
       OpenTelemetry.Tracer.with_span "caller" do
         Oban.insert(TestJob.new(%{}))
       end
 
-    assert_receive {:span, span(name: "caller", events: events)}
+    assert_receive {:span, span(name: "caller", span_id: caller_span_id)}
 
-    assert [event(name: "oban.insert", attributes: attributes)] = :otel_events.list(events)
+    assert_receive {:span,
+                    span(
+                      name: "send events",
+                      kind: :producer,
+                      parent_span_id: ^caller_span_id,
+                      attributes: attributes
+                    )}
 
     assert %{
-             "messaging.message.id": to_string(job.id),
+             "messaging.system.name": :oban,
+             "messaging.operation.name": "send",
+             "messaging.operation.type": :create,
+             "messaging.client.id": "TestJob",
              "messaging.destination.name": "events",
-             "oban.job.worker": "TestJob"
+             "messaging.message.id": job.id,
+             "oban.job.worker": "TestJob",
+             "oban.job.job_id": job.id,
+             "oban.job.priority": 0,
+             "oban.job.max_attempts": 1
            } == :otel_attributes.map(attributes)
   end
 
-  test "Oban.insert_all adds one event per job" do
+  test "Oban.insert_all records one send span with the batch's size" do
     OpenTelemetry.Tracer.with_span "caller" do
       Oban.insert_all([TestJob.new(%{}), TestJob.new(%{})])
     end
 
-    assert_receive {:span, span(name: "caller", events: events)}
-    assert [event(name: "oban.insert"), event(name: "oban.insert")] = :otel_events.list(events)
+    assert_receive {:span, span(name: "caller", span_id: caller_span_id)}
+
+    assert_receive {:span,
+                    span(
+                      name: "send",
+                      kind: :producer,
+                      parent_span_id: ^caller_span_id,
+                      attributes: attributes
+                    )}
+
+    assert %{"messaging.batch.message_count": 2, "messaging.system.name": :oban} =
+             :otel_attributes.map(attributes)
   end
 
-  test "inserts add no event unless insert is turned on" do
+  test "inserts record no span unless insert is turned on" do
     TestHelpers.remove_oban_handlers()
     OpentelemetryOban.setup()
 
@@ -62,8 +85,8 @@ defmodule OpentelemetryOban.InsertHandlerTest do
       Oban.insert(TestJob.new(%{}))
     end
 
-    assert_receive {:span, span(name: "caller", events: events)}
-    assert [] == :otel_events.list(events)
+    assert_receive {:span, span(name: "caller")}
+    refute_receive {:span, span(name: "send events")}
   end
 
   test "the worker hook writes the current trace into the job's meta, so the job links to it" do

@@ -71,7 +71,8 @@ defmodule OpentelemetryOban do
       default: :disabled,
       doc: """
       Traces inserts made with plain `Oban.insert/2` and `Oban.insert_all/2`, so callers need no
-      wrapper. Each inserted job adds an `oban.insert` event to the current span. With Oban Pro
+      wrapper. Each insert records the producer span `insert/2` records (`send <queue>`, or `send`
+      for `insert_all/2`); use this or the wrapper, not both, or an insert gets two. With Oban Pro
       loaded, a global worker hook also writes the current trace context into the job's meta, so
       the job's `process` span links to the trace that enqueued it; a process with no span of its
       own uses its `$callers`' context. Set to `[]` to turn it on.
@@ -205,13 +206,7 @@ defmodule OpentelemetryOban do
   end
 
   def insert_all(name, changesets, opts) when is_list(changesets) do
-    attrs = %{
-      MessagingAttributes.messaging_system() => :oban,
-      MessagingAttributes.messaging_operation_name() => "send",
-      MessagingAttributes.messaging_operation_type() =>
-        MessagingAttributes.messaging_operation_type_values().create,
-      MessagingAttributes.messaging_batch_message_count() => length(changesets)
-    }
+    attrs = attributes_before_insert_all(changesets)
 
     OpenTelemetry.Tracer.with_span "send", attributes: attrs, kind: :producer do
       changesets = Enum.map(changesets, &add_tracing_information_to_meta/1)
@@ -266,12 +261,24 @@ defmodule OpentelemetryOban do
     Changeset.change(changeset, %{meta: new_meta})
   end
 
-  defp attributes_before_insert(changeset) do
+  @doc false
+  def attributes_before_insert_all(changesets) do
+    %{
+      :"messaging.system.name" => :oban,
+      MessagingAttributes.messaging_operation_name() => "send",
+      MessagingAttributes.messaging_operation_type() =>
+        MessagingAttributes.messaging_operation_type_values().create,
+      MessagingAttributes.messaging_batch_message_count() => length(changesets)
+    }
+  end
+
+  @doc false
+  def attributes_before_insert(changeset) do
     queue = Changeset.get_field(changeset, :queue)
     worker = Changeset.get_field(changeset, :worker)
 
     %{
-      MessagingAttributes.messaging_system() => :oban,
+      :"messaging.system.name" => :oban,
       MessagingAttributes.messaging_operation_name() => "send",
       MessagingAttributes.messaging_client_id() => worker,
       MessagingAttributes.messaging_destination_name() => queue,
@@ -281,7 +288,8 @@ defmodule OpentelemetryOban do
     }
   end
 
-  defp attributes_after_insert(job) do
+  @doc false
+  def attributes_after_insert(job) do
     %{
       MessagingAttributes.messaging_message_id() => job.id,
       "oban.job.job_id": job.id,
