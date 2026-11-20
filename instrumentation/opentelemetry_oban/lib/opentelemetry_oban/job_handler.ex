@@ -205,12 +205,18 @@ defmodule OpentelemetryOban.JobHandler do
 
   defp process_error_type(_reason), do: "_OTHER"
 
-  defp set_measurements_attributes(%{duration: duration, queue_time: queue_time}) do
-    OpenTelemetry.Tracer.set_attributes(%{
-      :"oban.job.duration_us" => System.convert_time_unit(duration, :native, :microsecond),
-      :"oban.job.queue_time_us" => System.convert_time_unit(queue_time, :nanosecond, :microsecond)
-    })
+  defp set_measurements_attributes(measurements) do
+    OpenTelemetry.Tracer.set_attributes(
+      %{}
+      |> put_microseconds(:"oban.job.duration_us", measurements[:duration], :native)
+      |> put_microseconds(:"oban.job.queue_time_us", measurements[:queue_time], :nanosecond)
+    )
   end
+
+  defp put_microseconds(attributes, _key, nil, _unit), do: attributes
+
+  defp put_microseconds(attributes, key, value, unit),
+    do: Map.put(attributes, key, System.convert_time_unit(value, unit, :microsecond))
 
   defp put_links(span_opts, []), do: span_opts
   defp put_links(span_opts, links), do: Map.put(span_opts, :links, links)
