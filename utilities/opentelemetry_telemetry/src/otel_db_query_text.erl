@@ -1,6 +1,6 @@
 -module(otel_db_query_text).
 
--export([attributes/3, sql/2, truncate/1, summary/1]).
+-export([attributes/3, mode/1, sql/2, truncate/1, summary/1]).
 
 -define(MAX_BYTES, 2048).
 
@@ -20,6 +20,15 @@
         "|0[xX][0-9A-Fa-f]+"
         "|(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?"
         ")").
+
+-spec mode(#{query_sanitization := boolean(), opt_out_attrs := [atom()]}) ->
+    disabled | plain | obfuscated.
+mode(#{opt_out_attrs := OptOut, query_sanitization := Sanitize}) ->
+    case {lists:member('db.query.text', OptOut), Sanitize} of
+        {true, _} -> disabled;
+        {false, true} -> obfuscated;
+        {false, false} -> plain
+    end.
 
 %% A SQL statement's attributes for the span and its duration measurement: db.query.summary, and
 %% db.collection.name when the statement names one table, as written there with any database

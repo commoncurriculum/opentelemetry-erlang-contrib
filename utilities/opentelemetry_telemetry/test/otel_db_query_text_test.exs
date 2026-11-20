@@ -3,6 +3,17 @@ defmodule OtelDbQueryTextTest do
 
   defp obfuscated(sql), do: :otel_db_query_text.sql(sql, :obfuscated)
 
+  test "the mode follows opt_out_attrs, then query_sanitization" do
+    assert :otel_db_query_text.mode(%{opt_out_attrs: [], query_sanitization: true}) == :obfuscated
+    assert :otel_db_query_text.mode(%{opt_out_attrs: [], query_sanitization: false}) == :plain
+
+    assert :otel_db_query_text.mode(%{
+             opt_out_attrs: [:"db.query.text"],
+             query_sanitization: false
+           }) ==
+             :disabled
+  end
+
   test "obfuscated SQL replaces each literal with ?" do
     assert obfuscated("SELECT * FROM users WHERE email = 'ada@example.com' AND age > 42") ==
              "SELECT * FROM users WHERE email = ? AND age > ?"
