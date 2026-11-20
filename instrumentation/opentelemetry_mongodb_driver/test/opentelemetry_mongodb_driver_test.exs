@@ -210,7 +210,7 @@ defmodule OpentelemetryMongodbDriverTest do
 
   describe "db.query.text" do
     test "is left out when disabled", %{conn: conn} do
-      OpentelemetryMongodbDriver.setup(db_query_text: :disabled)
+      OpentelemetryMongodbDriver.setup(opt_out_attrs: [:"db.query.text"])
 
       Mongo.find(conn, "users", %{name: "Ada"}) |> Enum.to_list()
 
@@ -234,7 +234,7 @@ defmodule OpentelemetryMongodbDriverTest do
     end
 
     test "keeps the values when plain", %{conn: conn} do
-      OpentelemetryMongodbDriver.setup(db_query_text: :plain)
+      OpentelemetryMongodbDriver.setup(query_sanitization: false)
 
       id = Mongo.object_id()
       encoded_id = BSON.ObjectId.encode!(id)
@@ -251,7 +251,7 @@ defmodule OpentelemetryMongodbDriverTest do
     end
 
     test "records the documents of an insert when plain", %{conn: conn} do
-      OpentelemetryMongodbDriver.setup(db_query_text: :plain)
+      OpentelemetryMongodbDriver.setup(query_sanitization: false)
 
       {:ok, _} = Mongo.insert_one(conn, "users", %{name: "Ada", born: ~U[1815-12-10 00:00:00Z]})
 
@@ -267,7 +267,7 @@ defmodule OpentelemetryMongodbDriverTest do
     end
 
     test "keeps every key of every list item when obfuscated", %{conn: conn} do
-      OpentelemetryMongodbDriver.setup(db_query_text: :obfuscated)
+      OpentelemetryMongodbDriver.setup()
 
       {:ok, _} =
         Mongo.insert_many(conn, "users", [%{name: "Ada", tags: ["a", "b"]}, %{born: 1906}])
@@ -282,7 +282,7 @@ defmodule OpentelemetryMongodbDriverTest do
     end
 
     test "stops building the obfuscated text at 2048 bytes", %{conn: conn} do
-      OpentelemetryMongodbDriver.setup(db_query_text: :obfuscated)
+      OpentelemetryMongodbDriver.setup()
 
       documents = for i <- 1..20_000, do: %{i: i, name: "user #{i}"}
       {:ok, _} = Mongo.insert_many(conn, "users", documents)
@@ -296,7 +296,7 @@ defmodule OpentelemetryMongodbDriverTest do
     end
 
     test "is cut to its first 2048 bytes", %{conn: conn} do
-      OpentelemetryMongodbDriver.setup(db_query_text: :plain)
+      OpentelemetryMongodbDriver.setup(query_sanitization: false)
 
       Mongo.find(conn, "users", %{name: String.duplicate("é", 2_000)}) |> Enum.to_list()
 
@@ -314,7 +314,7 @@ defmodule OpentelemetryMongodbDriverTest do
     end
 
     test "is recorded for each command with the span's attributes", %{conn: conn} do
-      OpentelemetryMongodbDriver.setup(db_query_text: :plain)
+      OpentelemetryMongodbDriver.setup(query_sanitization: false)
 
       Mongo.find(conn, "users", %{name: "Ada"}) |> Enum.to_list()
       {:error, _} = Mongo.command(conn, bogusCommand: 1)

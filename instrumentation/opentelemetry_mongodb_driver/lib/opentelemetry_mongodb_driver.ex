@@ -37,7 +37,7 @@ defmodule OpentelemetryMongodbDriver do
       the span only
     * `db.response.status_code` - the server's error code, when the command failed
     * `error.type` - the error code, or the error's module when it has no code
-    * `db.query.text` - the command, as the `:db_query_text` option says, on the span only
+    * `db.query.text` - the command, sanitized unless `query_sanitization: false`, on the span only
 
   Spans are named `{db.operation.name} {target}`, the command in SCREAMING_SNAKE_CASE (`FIND_AND_MODIFY users`), where the target is the collection, or the
   database when the command names no collection.
@@ -61,18 +61,20 @@ defmodule OpentelemetryMongodbDriver do
   @max_query_text_bytes 2048
 
   @options_schema NimbleOptions.new!(
-                    db_query_text: [
-                      type: {:in, [:disabled, :obfuscated, :plain]},
-                      default: :obfuscated,
+                    query_sanitization: [
+                      type: :boolean,
+                      default: true,
                       doc: """
-                      Whether to record the command as `db.query.text`:
-
-                        * `:disabled` - leave it out
-                        * `:obfuscated` - record it with every key and its collection, and every
-                          other value replaced by `?`
-                        * `:plain` - record it as it is, values included
-
-                      Recorded text is built only up to its first 2048 bytes.
+                      Whether `db.query.text` keeps every key and the collection and replaces
+                      every other value with `?`. `false` records the command as it is, values
+                      included. Recorded text is built only up to its first 2048 bytes.
+                      """
+                    ],
+                    opt_out_attrs: [
+                      type: {:list, {:in, [DBAttributes.db_query_text()]}},
+                      default: [],
+                      doc: """
+                      Attributes to leave out, such as `[DBAttributes.db_query_text()]`.
                       """
                     ]
                   )
@@ -91,11 +93,16 @@ defmodule OpentelemetryMongodbDriver do
   """
   @spec setup(opts()) :: :ok
   def setup(opts \\ []) do
-    :otel_db_client.attach(
-      __MODULE__,
-      @events,
-      Map.new(NimbleOptions.validate!(opts, @options_schema))
-    )
+    opts = NimbleOptions.validate!(opts, @options_schema)
+    :otel_db_client.attach(__MODULE__, @events, %{query_text: query_text_mode(opts)})
+  end
+
+  defp query_text_mode(opts) do
+    cond do
+      DBAttributes.db_query_text() in opts[:opt_out_attrs] -> :disabled
+      opts[:query_sanitization] -> :obfuscated
+      true -> :plain
+    end
   end
 
   @doc false
@@ -191,9 +198,9 @@ defmodule OpentelemetryMongodbDriver do
   defp error_type(%module{}), do: inspect(module)
   defp error_type(_error), do: "_OTHER"
 
-  defp query_text(_metadata, %{db_query_text: :disabled}), do: nil
+  defp query_text(_metadata, %{query_text: :disabled}), do: nil
 
-  defp query_text(%{cmd: cmd, collection: collection}, %{db_query_text: mode}) do
+  defp query_text(%{cmd: cmd, collection: collection}, %{query_text: mode}) do
     {text, _budget} = object(cmd, {mode, collection}, @max_query_text_bytes)
     text |> IO.iodata_to_binary() |> :otel_db_query_text.truncate()
   rescue

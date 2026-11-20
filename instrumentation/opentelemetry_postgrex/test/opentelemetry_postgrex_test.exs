@@ -231,7 +231,7 @@ defmodule OpentelemetryPostgrexTest do
   @tag :capture_log
   test "a statement that is chardata but not iodata is still traced, and tracing goes on",
        %{conn: conn} do
-    OpentelemetryPostgrex.setup(db_query_text: :plain)
+    OpentelemetryPostgrex.setup(query_sanitization: false)
 
     assert_raise ArgumentError, fn -> Postgrex.query(conn, [~c"SELECT '", 8364, ~c"'"], []) end
 
@@ -252,7 +252,7 @@ defmodule OpentelemetryPostgrexTest do
   end
 
   test "db.query.text keeps every literal when plain", %{conn: conn} do
-    OpentelemetryPostgrex.setup(db_query_text: :plain)
+    OpentelemetryPostgrex.setup(query_sanitization: false)
 
     Postgrex.query!(conn, "SELECT 'Ada', 42", [])
 
@@ -261,7 +261,7 @@ defmodule OpentelemetryPostgrexTest do
   end
 
   test "db.query.text is left out when disabled", %{conn: conn} do
-    OpentelemetryPostgrex.setup(db_query_text: :disabled)
+    OpentelemetryPostgrex.setup(opt_out_attrs: [:"db.query.text"])
 
     Postgrex.query!(conn, "SELECT 1", [])
 
