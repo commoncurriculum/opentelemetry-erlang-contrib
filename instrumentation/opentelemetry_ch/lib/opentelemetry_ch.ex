@@ -30,7 +30,8 @@ defmodule OpentelemetryCh do
     * `db.operation.name` - the command `Ch` runs the query as, such as `SELECT` or `INSERT`
     * `db.query.summary` - each operation of the statement followed by the tables it names, such
       as `SELECT events` or `INSERT events SELECT staging`
-    * `db.query.text` - the statement, as the `:db_query_text` option says
+    * `db.query.text` - the statement, sanitized unless `query_sanitization: false`; left out
+      when `opt_out_attrs` names it
     * `server.address` and `server.port` - the server; the port is left out when it is 8123
     * `db.response.returned_rows` - the rows a read returned, when ch reports them
     * `db.response.status_code` - the ClickHouse error code, when the query failed with one
@@ -54,18 +55,20 @@ defmodule OpentelemetryCh do
   @default_port 8123
 
   @options_schema NimbleOptions.new!(
-                    db_query_text: [
-                      type: {:in, [:disabled, :obfuscated, :plain]},
-                      default: :obfuscated,
+                    query_sanitization: [
+                      type: :boolean,
+                      default: true,
                       doc: """
-                      Whether to record the statement as `db.query.text`:
-
-                        * `:disabled` - leave it out
-                        * `:obfuscated` - record it with every literal replaced by `?`; query
-                          parameters, such as the ones Ecto sends, stay as they are
-                        * `:plain` - record it as it is
-
-                      Recorded text is cut to its first 2048 bytes.
+                      Whether `db.query.text` has every literal replaced by `?`; query
+                      parameters, such as `{id:UInt64}`, stay as they are. `false` records the
+                      statement as it is. Recorded text is cut to its first 2048 bytes.
+                      """
+                    ],
+                    opt_out_attrs: [
+                      type: {:list, {:in, [DBAttributes.db_query_text()]}},
+                      default: [],
+                      doc: """
+                      Attributes to leave out, such as `[DBAttributes.db_query_text()]`.
                       """
                     ]
                   )
@@ -84,15 +87,20 @@ defmodule OpentelemetryCh do
   """
   @spec setup(opts()) :: :ok
   def setup(opts \\ []) do
-    :otel_db_client.attach(
-      __MODULE__,
-      @events,
-      Map.new(NimbleOptions.validate!(opts, @options_schema))
-    )
+    opts = NimbleOptions.validate!(opts, @options_schema)
+    :otel_db_client.attach(__MODULE__, @events, %{query_text: query_text_mode(opts)})
+  end
+
+  defp query_text_mode(opts) do
+    cond do
+      DBAttributes.db_query_text() in opts[:opt_out_attrs] -> :disabled
+      opts[:query_sanitization] -> :obfuscated
+      true -> :plain
+    end
   end
 
   @doc false
-  def handle([:ch, :query, :start], _measurements, metadata, %{db_query_text: mode}) do
+  def handle([:ch, :query, :start], _measurements, metadata, %{query_text: mode}) do
     {statement_attributes, span_attributes} =
       case statement_text(metadata.query) do
         nil -> {%{}, %{}}

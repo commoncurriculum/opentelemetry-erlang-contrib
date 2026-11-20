@@ -256,7 +256,7 @@ defmodule OpentelemetryChTest do
   end
 
   test "db.query.text keeps every literal when plain", %{conn: conn} do
-    OpentelemetryCh.setup(db_query_text: :plain)
+    OpentelemetryCh.setup(query_sanitization: false)
 
     Ch.query!(conn, "SELECT 'Ada', 42")
 
@@ -265,7 +265,7 @@ defmodule OpentelemetryChTest do
   end
 
   test "db.query.text is left out when disabled", %{conn: conn} do
-    OpentelemetryCh.setup(db_query_text: :disabled)
+    OpentelemetryCh.setup(opt_out_attrs: [:"db.query.text"])
 
     Ch.query!(conn, "SELECT 1")
 
