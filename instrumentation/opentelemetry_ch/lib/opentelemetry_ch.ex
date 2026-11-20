@@ -30,7 +30,8 @@ defmodule OpentelemetryCh do
     * `db.operation.name` - the command `Ch` runs the query as, such as `SELECT` or `INSERT`
     * `db.query.summary` - each operation of the statement followed by the tables it names, such
       as `SELECT events` or `INSERT events SELECT staging`
-    * `db.query.text` - the statement, sanitized unless `query_sanitization: false`
+    * `db.query.text` - the statement, sanitized unless `query_sanitization: false`; left out
+      when `opt_out_attrs` names it
     * `server.address` and `server.port` - the server; the port is left out when it is 8123
     * `db.response.returned_rows` - the rows a read returned, when ch reports them
     * `db.response.status_code` - the ClickHouse error code, when the query failed with one

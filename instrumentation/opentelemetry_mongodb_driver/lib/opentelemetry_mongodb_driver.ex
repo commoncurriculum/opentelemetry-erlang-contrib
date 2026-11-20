@@ -37,7 +37,8 @@ defmodule OpentelemetryMongodbDriver do
       the span only
     * `db.response.status_code` - the server's error code, when the command failed
     * `error.type` - the error code, or the error's module when it has no code
-    * `db.query.text` - the command, sanitized unless `query_sanitization: false`, on the span only
+    * `db.query.text` - the command, on the span only, sanitized unless
+      `query_sanitization: false`; left out when `opt_out_attrs` names it
 
   Spans are named `{db.operation.name} {target}`, the command in SCREAMING_SNAKE_CASE (`FIND_AND_MODIFY users`), where the target is the collection, or the
   database when the command names no collection.

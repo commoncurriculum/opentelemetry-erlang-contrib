@@ -32,7 +32,8 @@ defmodule OpentelemetryPostgrex do
       it reported none
     * `db.query.summary` - each operation of the statement followed by the tables it names, such
       as `SELECT users` or `INSERT orders SELECT carts`
-    * `db.query.text` - the statement, sanitized unless `query_sanitization: false`
+    * `db.query.text` - the statement, sanitized unless `query_sanitization: false`; left out
+      when `opt_out_attrs` names it
     * `server.address` and `server.port` - the server; the port is left out when it is 5432,
       and a Unix socket is reported by its path
     * `db.response.returned_rows` - the rows the server returned; left out for a statement that
