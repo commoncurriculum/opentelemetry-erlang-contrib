@@ -63,7 +63,7 @@ defmodule OpentelemetryOban do
       Internal handler configuration. Traces Oban's engine, notifier and peer work, such as
       fetching, staging and acknowledging jobs, so the queries it makes have a parent span.
       Off by default, because Oban polls every queue on every node; set to `[]` to turn it on.
-      With `insert` on too, an insert's work is its `send` span, not `oban.engine.insert_job`.
+      Inserts are the `insert` option's, not this one's.
       """
     ],
     insert: [
@@ -131,18 +131,8 @@ defmodule OpentelemetryOban do
       OpentelemetryOban.PluginHandler.attach()
     end
 
-    cond do
-      opts.internal == :disabled ->
-        :ok
-
-      opts.insert == :disabled ->
-        OpentelemetryOban.InternalHandler.attach()
-
-      true ->
-        OpentelemetryOban.InternalHandler.attach([
-          [:engine, :insert_job],
-          [:engine, :insert_all_jobs]
-        ])
+    if opts.internal != :disabled do
+      OpentelemetryOban.InternalHandler.attach()
     end
 
     if opts.insert != :disabled do

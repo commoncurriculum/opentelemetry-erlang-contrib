@@ -14,8 +14,7 @@
 * Trace Oban's engine, notifier and peer work (`oban.engine.fetch_jobs`, `oban.engine.complete_job`,
   `oban.peer.election`, ...) as internal spans, so the queries Oban makes have a parent span instead
   of each starting its own trace. Off by default, since Oban polls every queue on every node; turn it on with `internal: []`.
-  With `insert: []` on too, an insert's work is its `send` span instead of `oban.engine.insert_job`,
-  so the two handlers never open spans on the same telemetry event.
+  Inserts are left to `insert: []`, which records them as `send` spans.
 * Record the `messaging.process.duration` histogram (seconds) for every job the job handler sees,
   with `messaging.system.name`, `messaging.operation.name`, `messaging.operation.type`,
   `messaging.destination.name` (the queue) and, for failed jobs, `error.type` (the exception module).
