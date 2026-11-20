@@ -50,7 +50,7 @@ defmodule OpentelemetryOban.InsertHandlerTest do
              "messaging.operation.type": :create,
              "messaging.client.id": "TestJob",
              "messaging.destination.name": "events",
-             "messaging.message.id": job.id,
+             "messaging.message.id": Integer.to_string(job.id),
              "oban.job.worker": "TestJob",
              "oban.job.job_id": job.id,
              "oban.job.priority": 0,

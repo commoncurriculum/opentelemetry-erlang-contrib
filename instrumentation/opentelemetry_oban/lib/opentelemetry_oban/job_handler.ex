@@ -130,7 +130,6 @@ defmodule OpentelemetryOban.JobHandler do
       %{
         :"messaging.system.name" => :oban,
         MessagingAttributes.messaging_operation_name() => "process",
-        MessagingAttributes.messaging_message_id() => id,
         MessagingAttributes.messaging_client_id() => worker,
         MessagingAttributes.messaging_destination_name() => queue,
         MessagingAttributes.messaging_operation_type() =>
@@ -142,6 +141,7 @@ defmodule OpentelemetryOban.JobHandler do
         :"oban.job.attempt" => attempt,
         :"oban.job.max_attempts" => max_attempts
       }
+      |> OpentelemetryOban.put_message_id(id)
       |> put_timestamp(:"oban.job.inserted_at", inserted_at)
       |> put_timestamp(:"oban.job.scheduled_at", scheduled_at)
       |> put_timestamp(:"oban.job.attempted_at", attempted_at)

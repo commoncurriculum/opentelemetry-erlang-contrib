@@ -32,6 +32,8 @@
 
 * Spans use `messaging.system.name` instead of `messaging.system`, which semantic conventions
   deprecate in its favor. The queue metrics and `messaging.process.duration` already did.
+* `messaging.message.id` is the job id as a string, as semantic conventions type it, on both the
+  `send` and `process` spans. It was an integer.
 
 ### Fixed
 
