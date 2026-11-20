@@ -88,6 +88,34 @@ defmodule OpentelemetryOban.JobHandlerTest do
       assert "#{OpentelemetryOban.JobHandler}.job_stop" in handler_ids
       assert "#{OpentelemetryOban.JobHandler}.job_exception" in handler_ids
     end
+
+    test "duration and queue time arrive in native units and are recorded in microseconds" do
+      job = %Oban.Job{
+        id: 1,
+        queue: "events",
+        worker: "TestJob",
+        priority: 0,
+        attempt: 1,
+        max_attempts: 1,
+        meta: %{}
+      }
+
+      :telemetry.execute([:oban, :job, :start], %{system_time: System.system_time()}, %{job: job})
+
+      :telemetry.execute(
+        [:oban, :job, :stop],
+        %{
+          duration: System.convert_time_unit(3, :millisecond, :native),
+          queue_time: System.convert_time_unit(2, :millisecond, :native)
+        },
+        %{job: job}
+      )
+
+      assert_receive {:span, span(name: "process events", attributes: attributes)}
+
+      assert %{"oban.job.duration_us": 3_000, "oban.job.queue_time_us": 2_000} =
+               :otel_attributes.map(attributes)
+    end
   end
 
   describe "span_relationship: :child" do
