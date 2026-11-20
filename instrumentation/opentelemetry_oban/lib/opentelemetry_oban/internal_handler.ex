@@ -35,10 +35,10 @@ defmodule OpentelemetryOban.InternalHandler do
     [:peer, :election]
   ]
 
-  def attach() do
+  def attach(except \\ []) do
     :telemetry.attach_many(
       {__MODULE__, :internal},
-      Enum.flat_map(@events, fn event ->
+      Enum.flat_map(@events -- except, fn event ->
         Enum.map([:start, :stop, :exception], &([:oban | event] ++ [&1]))
       end),
       &__MODULE__.handle_event/4,
