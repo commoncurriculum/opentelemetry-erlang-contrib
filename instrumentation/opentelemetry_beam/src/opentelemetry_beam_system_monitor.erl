@@ -150,7 +150,7 @@ subject_attributes(Pid) when is_pid(Pid) ->
                 'beam.process.pid' => list_to_binary(pid_to_list(Pid)),
                 'beam.process.memory' => Memory,
                 'beam.process.binary.memory' => lists:sum([Size || {_, Size, _} <- Binaries]),
-                'beam.process.message_queue_len' => QueueLen,
+                'beam.process.message_queue.length' => QueueLen,
                 'code.stacktrace' => format_stacktrace(Stacktrace)},
              opentelemetry:links([process_span_ctx(Dictionary)])};
         undefined ->
@@ -171,9 +171,9 @@ process_attributes(Name, InitialCall, Dictionary) ->
     end.
 
 event_attributes(long_gc, Info) ->
-    #{'beam.process.gc.duration' => proplists:get_value(timeout, Info)};
+    #{'beam.process.gc.duration' => proplists:get_value(timeout, Info) / 1000};
 event_attributes(long_schedule, Info) ->
-    maps:merge(#{'beam.process.schedule.duration' => proplists:get_value(timeout, Info)},
+    maps:merge(#{'beam.process.schedule.duration' => proplists:get_value(timeout, Info) / 1000},
                maps:from_list([{Key, format_location_mfa(Location)}
                                || {Key, Location} <- [{'beam.process.schedule.in', proplists:get_value(in, Info)},
                                                       {'beam.process.schedule.out', proplists:get_value(out, Info)}],
