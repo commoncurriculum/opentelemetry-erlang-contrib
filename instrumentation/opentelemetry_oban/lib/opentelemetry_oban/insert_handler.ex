@@ -1,6 +1,7 @@
 defmodule OpentelemetryOban.InsertHandler do
   @moduledoc false
 
+  alias OpenTelemetry.SemConv.Incubating.MessagingAttributes
   alias OpenTelemetry.Span
   alias OpentelemetryOban.Errors
 
@@ -44,7 +45,7 @@ defmodule OpentelemetryOban.InsertHandler do
   def handle_event([:oban, :engine, :insert_all_jobs, :start], _measurements, metadata, _config) do
     OpentelemetryTelemetry.start_telemetry_span(@tracer_id, "send", metadata, %{
       kind: :producer,
-      attributes: OpentelemetryOban.attributes_before_insert_all(changesets(metadata.changesets))
+      attributes: OpentelemetryOban.attributes_before_insert_all()
     })
   rescue
     exception -> warn(exception)
@@ -59,6 +60,14 @@ defmodule OpentelemetryOban.InsertHandler do
   end
 
   def handle_event([:oban, :engine, :insert_all_jobs, :stop], _measurements, metadata, _config) do
+    ctx = OpentelemetryTelemetry.set_current_telemetry_span(@tracer_id, metadata)
+
+    Span.set_attribute(
+      ctx,
+      MessagingAttributes.messaging_batch_message_count(),
+      length(metadata.jobs)
+    )
+
     OpentelemetryTelemetry.end_telemetry_span(@tracer_id, metadata)
   rescue
     exception -> warn(exception)
@@ -109,9 +118,6 @@ defmodule OpentelemetryOban.InsertHandler do
 
       {:ok, args, opts}
   end
-
-  defp changesets(%{changesets: changesets}), do: changesets
-  defp changesets(changesets), do: Enum.to_list(changesets)
 
   defp warn(exception) do
     Logger.warning("OpentelemetryOban insert span failed: #{Exception.message(exception)}")

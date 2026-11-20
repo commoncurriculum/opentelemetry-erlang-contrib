@@ -77,6 +77,25 @@ defmodule OpentelemetryOban.InsertHandlerTest do
              :otel_attributes.map(attributes)
   end
 
+  test "Oban.insert_all evaluates a stream of changesets once, and the span counts the jobs" do
+    test_pid = self()
+
+    changesets =
+      Stream.map(1..2, fn _ ->
+        send(test_pid, :evaluated)
+        TestJob.new(%{})
+      end)
+
+    Oban.insert_all(changesets)
+
+    assert_received :evaluated
+    assert_received :evaluated
+    refute_received :evaluated
+
+    assert_receive {:span, span(name: "send", attributes: attributes)}
+    assert %{"messaging.batch.message_count": 2} = :otel_attributes.map(attributes)
+  end
+
   test "with the internal handler on too, an insert's work is its send span and the caller stays current" do
     TestHelpers.remove_oban_handlers()
     OpentelemetryOban.setup(insert: [], internal: [])
