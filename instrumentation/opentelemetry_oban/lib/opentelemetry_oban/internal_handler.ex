@@ -17,7 +17,6 @@ defmodule OpentelemetryOban.InternalHandler do
     [:engine, :cancel_all_jobs],
     [:engine, :delete_all_jobs],
     [:engine, :fetch_jobs],
-    [:engine, :insert_all_jobs],
     [:engine, :prune_jobs],
     [:engine, :rescue_jobs],
     [:engine, :retry_all_jobs],
@@ -27,7 +26,6 @@ defmodule OpentelemetryOban.InternalHandler do
     [:engine, :delete_job],
     [:engine, :discard_job],
     [:engine, :error_job],
-    [:engine, :insert_job],
     [:engine, :retry_job],
     [:engine, :snooze_job],
     [:engine, :update_job],
@@ -35,10 +33,10 @@ defmodule OpentelemetryOban.InternalHandler do
     [:peer, :election]
   ]
 
-  def attach(except \\ []) do
+  def attach() do
     :telemetry.attach_many(
       {__MODULE__, :internal},
-      Enum.flat_map(@events -- except, fn event ->
+      Enum.flat_map(@events, fn event ->
         Enum.map([:start, :stop, :exception], &([:oban | event] ++ [&1]))
       end),
       &__MODULE__.handle_event/4,

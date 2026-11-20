@@ -43,17 +43,6 @@ defmodule OpentelemetryOban.InternalHandlerTest do
 
     assert_receive {:span,
                     span(
-                      name: "oban.engine.insert_job",
-                      kind: :internal,
-                      attributes: insert_attributes
-                    )},
-                   5_000
-
-    assert %{"messaging.system.name": :oban, "messaging.destination.name": "events"} =
-             :otel_attributes.map(insert_attributes)
-
-    assert_receive {:span,
-                    span(
                       name: "oban.engine.fetch_jobs",
                       kind: :internal,
                       attributes: fetch_attributes
@@ -67,6 +56,18 @@ defmodule OpentelemetryOban.InternalHandlerTest do
 
     assert_receive {:span, span(name: "oban.engine.complete_job", parent_span_id: ^job_span_id)},
                    5_000
+  end
+
+  test "inserts are not engine work: the insert option traces them" do
+    OpentelemetryOban.setup(internal: [])
+    start_oban()
+
+    {:ok, _job} = Oban.insert(__MODULE__, TestJob.new(%{}))
+    Oban.insert_all(__MODULE__, [TestJob.new(%{})])
+
+    assert_receive {:span, span(name: "process events")}, 5_000
+    refute_receive {:span, span(name: "oban.engine.insert_job")}, 200
+    refute_receive {:span, span(name: "oban.engine.insert_all_jobs")}, 200
   end
 
   test "an engine failure fails its span" do
