@@ -46,7 +46,7 @@ setup(Meter, Opts) ->
       #{description => <<"The number of dirty CPU scheduler threads online.">>,
         unit => '{scheduler}'}),
     system_info_gauge(
-      dirty_io_schedulers, Meter, 'beam.dirty_io_scheduler.count',
+      dirty_io_schedulers, Meter, 'beam.cpu.dirty_io_scheduler.count',
       #{description => <<"The number of scheduler dirty I/O scheduler "
                          "threads used by the emulator.">>,
         unit => '{scheduler}'}),
@@ -210,8 +210,8 @@ setup(Meter, Opts) ->
       Meter, 'beam.port.io',
       fun(_) ->
               {{input, Input}, {output, Output}} = erlang:statistics(io),
-              [{Output, #{'port.io.direction' => write}},
-               {Input,  #{'port.io.direction' => read}}]
+              [{Output, #{'network.io.direction' => transmit}},
+               {Input,  #{'network.io.direction' => 'receive'}}]
       end, [],
       #{description => <<"Total number of bytes read and written to/from ports.">>,
         unit => 'By'}),
@@ -233,15 +233,12 @@ setup(Meter, Opts) ->
         unit => '{process}'}),
 
     case Opts of
-        #{opt_in := #{'beam.process.cpu.time' := true}} ->
+        #{opt_in := #{'beam.cpu.time' := true}} ->
             otel_meter:create_observable_counter(
-              Meter, 'beam.process.cpu.time',
+              Meter, 'beam.cpu.time',
               fun(_) ->
                       {Runtime, _} = erlang:statistics(runtime),
-                      {WallclockTime, _} = erlang:statistics(wall_clock),
-
-                      [{Runtime / 1.0e3, #{'beam.process.cpu.state' => user}},
-                       {WallclockTime / 1.0e3, #{'beam.process.cpu.state' => wall}}]
+                      [{Runtime / 1.0e3, #{}}]
               end, [],
               #{description => <<"The sum of the runtime for all threads "
                                  "in the Erlang runtime system. "
@@ -278,7 +275,7 @@ setup(Meter, Opts) ->
         unit => '{node}'}),
 
     otel_meter:create_observable_gauge(
-      Meter, 'beam.scheduler.utilization',
+      Meter, 'beam.cpu.scheduler.utilization',
       fun(_) -> [{opentelemetry_beam_scheduler:utilization(), #{}}] end, [],
       #{description => <<"Share of time the normal and dirty CPU schedulers spent "
                          "working since the previous observation.">>,

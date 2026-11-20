@@ -14,6 +14,9 @@ all() ->
         counts_against_limits,
         memory_by_type_and_state,
         scheduler_utilization,
+        scheduler_counts,
+        port_io_by_network_direction,
+        cpu_time_opt_in,
         persistent_terms,
         large_heap,
         long_gc,
@@ -75,8 +78,26 @@ memory_by_type_and_state(_Config) ->
     ok.
 
 scheduler_utilization(_Config) ->
-    Utilization = single_value('beam.scheduler.utilization', collect()),
+    Utilization = single_value('beam.cpu.scheduler.utilization', collect()),
     ?assert(Utilization >= 0 andalso Utilization =< 1, Utilization),
+    ok.
+
+scheduler_counts(_Config) ->
+    Metrics = collect(),
+    ?assertEqual(erlang:system_info(dirty_io_schedulers),
+                 single_value('beam.cpu.dirty_io_scheduler.count', Metrics)),
+    ok.
+
+port_io_by_network_direction(_Config) ->
+    ?assertEqual(['receive', transmit],
+                 lists:sort([maps:get('network.io.direction', A) || {_, A} <- points('beam.port.io', collect())])),
+    ok.
+
+cpu_time_opt_in(_Config) ->
+    ok = opentelemetry_beam_metrics:setup(#{opt_in => #{'beam.cpu.time' => true}}),
+    [{Seconds, Attributes}] = points('beam.cpu.time', collect()),
+    ?assertEqual(#{}, Attributes),
+    ?assert(Seconds > 0, Seconds),
     ok.
 
 persistent_terms(_Config) ->
@@ -106,7 +127,7 @@ large_heap(_Config) ->
                  [{TraceId, SpanId} || #link{trace_id = TraceId, span_id = SpanId} <- Links]),
     ?assertMatch(#{'beam.process.registered_name' := <<"opentelemetry_beam_large">>,
                    'beam.process.initial_call' := <<"erlang:apply/2">>,
-                   'beam.process.message_queue_len' := 0},
+                   'beam.process.message_queue.length' := 0},
                  Attributes),
     ?assert(maps:get('beam.process.memory', Attributes) > 20000000),
     ?assertEqual(list_to_binary(pid_to_list(Pid)), maps:get('beam.process.pid', Attributes)),
@@ -120,7 +141,7 @@ long_gc(_Config) ->
     Pid ! stop,
     stop_system_monitor(long_gc_ms),
     ?assertMatch(#{'beam.process.registered_name' := <<"opentelemetry_beam_long_gc">>}, Attributes),
-    ?assert(maps:get('beam.process.gc.duration', Attributes) >= 1),
+    ?assert(maps:get('beam.process.gc.duration', Attributes) >= 0.001),
     ok.
 
 long_schedule(_Config) ->
@@ -135,7 +156,7 @@ long_schedule(_Config) ->
     Pid ! stop,
     stop_system_monitor(long_schedule_ms),
     ?assertMatch(#{'beam.process.registered_name' := <<"opentelemetry_beam_long_schedule">>}, Attributes),
-    ?assert(maps:get('beam.process.schedule.duration', Attributes) >= 1),
+    ?assert(maps:get('beam.process.schedule.duration', Attributes) >= 0.001),
     ok.
 
 busy_port(_Config) ->
@@ -174,7 +195,7 @@ long_message_queue(_Config) ->
             Pid ! stop,
             stop_system_monitor(long_message_queue),
             ?assertMatch(#{'beam.process.registered_name' := <<"opentelemetry_beam_long_queue">>}, Attributes),
-            ?assert(maps:get('beam.process.message_queue_len', Attributes) >= 1000),
+            ?assert(maps:get('beam.process.message_queue.length', Attributes) >= 1000),
             ok
     end.
 
