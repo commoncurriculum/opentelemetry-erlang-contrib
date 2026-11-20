@@ -11,9 +11,14 @@ defmodule OpentelemetryOban.InsertHandler do
   def attach() do
     :telemetry.attach_many(
       {__MODULE__, :insert},
-      for event <- [:insert_job, :insert_all_jobs], phase <- [:start, :stop, :exception] do
-        [:oban, :engine, event, phase]
-      end,
+      [
+        [:oban, :engine, :insert_job, :start],
+        [:oban, :engine, :insert_job, :stop],
+        [:oban, :engine, :insert_job, :exception],
+        [:oban, :engine, :insert_all_jobs, :start],
+        [:oban, :engine, :insert_all_jobs, :stop],
+        [:oban, :engine, :insert_all_jobs, :exception]
+      ],
       &__MODULE__.handle_event/4,
       []
     )
