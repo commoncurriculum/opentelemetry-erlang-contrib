@@ -209,7 +209,7 @@ defmodule OpentelemetryOban.JobHandler do
     OpenTelemetry.Tracer.set_attributes(
       %{}
       |> put_microseconds(:"oban.job.duration_us", measurements[:duration], :native)
-      |> put_microseconds(:"oban.job.queue_time_us", measurements[:queue_time], :nanosecond)
+      |> put_microseconds(:"oban.job.queue_time_us", measurements[:queue_time], :native)
     )
   end
 
