@@ -207,7 +207,12 @@ defmodule OpentelemetryOban do
   end
 
   def insert_all(name, changesets, opts) when is_list(changesets) do
-    attrs = attributes_before_insert_all(changesets)
+    attrs =
+      Map.put(
+        attributes_before_insert_all(),
+        MessagingAttributes.messaging_batch_message_count(),
+        length(changesets)
+      )
 
     OpenTelemetry.Tracer.with_span "send", attributes: attrs, kind: :producer do
       changesets = Enum.map(changesets, &add_tracing_information_to_meta/1)
@@ -263,13 +268,12 @@ defmodule OpentelemetryOban do
   end
 
   @doc false
-  def attributes_before_insert_all(changesets) do
+  def attributes_before_insert_all do
     %{
       :"messaging.system.name" => :oban,
       MessagingAttributes.messaging_operation_name() => "send",
       MessagingAttributes.messaging_operation_type() =>
-        MessagingAttributes.messaging_operation_type_values().create,
-      MessagingAttributes.messaging_batch_message_count() => length(changesets)
+        MessagingAttributes.messaging_operation_type_values().create
     }
   end
 
