@@ -302,10 +302,16 @@ defmodule OpentelemetryOban do
   @doc false
   def attributes_after_insert(job) do
     %{
-      MessagingAttributes.messaging_message_id() => job.id,
       "oban.job.job_id": job.id,
       "oban.job.priority": job.priority || 0,
       "oban.job.max_attempts": job.max_attempts
     }
+    |> put_message_id(job.id)
   end
+
+  @doc false
+  def put_message_id(attributes, nil), do: attributes
+
+  def put_message_id(attributes, id),
+    do: Map.put(attributes, MessagingAttributes.messaging_message_id(), Integer.to_string(id))
 end

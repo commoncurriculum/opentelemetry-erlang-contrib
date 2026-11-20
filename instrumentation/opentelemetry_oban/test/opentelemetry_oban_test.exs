@@ -33,6 +33,7 @@ defmodule OpentelemetryObanTest do
 
   test "records span on job insertion" do
     {:ok, %{id: id}} = OpentelemetryOban.insert(TestJob.new(%{}))
+    message_id = Integer.to_string(id)
     assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :events)
 
     assert_receive {:span,
@@ -51,7 +52,7 @@ defmodule OpentelemetryObanTest do
              "oban.job.max_attempts": 1,
              "oban.job.priority": 0,
              "oban.job.worker": "TestJob",
-             "messaging.message.id": ^id,
+             "messaging.message.id": ^message_id,
              "messaging.client.id": "TestJob",
              "messaging.operation.type": :create,
              "messaging.system.name": :oban
@@ -137,6 +138,7 @@ defmodule OpentelemetryObanTest do
 
   test "records spans for successful Oban jobs" do
     {:ok, %{id: id}} = OpentelemetryOban.insert(TestJob.new(%{}))
+    message_id = Integer.to_string(id)
     assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :events)
 
     assert_receive {:span,
@@ -163,7 +165,7 @@ defmodule OpentelemetryObanTest do
              "oban.job.queue": "events",
              "oban.job.attempted_at": _attempted_at,
              "oban.job.worker": "TestJob",
-             "messaging.message.id": ^id,
+             "messaging.message.id": ^message_id,
              "messaging.client.id": "TestJob",
              "messaging.operation.type": :process,
              "messaging.system.name": :oban
@@ -189,6 +191,7 @@ defmodule OpentelemetryObanTest do
 
   test "records spans for Oban jobs that stop with {:error, :something}" do
     {:ok, %{id: id}} = OpentelemetryOban.insert(TestJobThatReturnsError.new(%{}))
+    message_id = Integer.to_string(id)
     assert %{success: 0, discard: 1} = Oban.drain_queue(queue: :events)
 
     expected_status = OpenTelemetry.status(:error, "")
@@ -218,7 +221,7 @@ defmodule OpentelemetryObanTest do
              "messaging.operation.name": "process",
              "messaging.operation.type": :process,
              "messaging.system.name": :oban,
-             "messaging.message.id": ^id,
+             "messaging.message.id": ^message_id,
              "messaging.client.id": "TestJobThatReturnsError",
              "error.type": "Oban.PerformError"
            } = attrs
@@ -274,6 +277,7 @@ defmodule OpentelemetryObanTest do
 
   test "records spans for Oban jobs that stop with an exception" do
     {:ok, %{id: id}} = OpentelemetryOban.insert(TestJobThatRaisesException.new(%{}))
+    message_id = Integer.to_string(id)
     assert %{success: 0, discard: 1} = Oban.drain_queue(queue: :events)
 
     expected_status = OpenTelemetry.status(:error, "")
@@ -300,7 +304,7 @@ defmodule OpentelemetryObanTest do
              "oban.job.scheduled_at": _scheduled_at,
              "oban.job.worker": "TestJobThatRaisesException",
              "messaging.operation.type": :process,
-             "messaging.message.id": ^id,
+             "messaging.message.id": ^message_id,
              "messaging.client.id": "TestJobThatRaisesException",
              "messaging.system.name": :oban,
              "error.type": "UndefinedFunctionError"
@@ -319,6 +323,7 @@ defmodule OpentelemetryObanTest do
 
   test "records spans for Oban jobs that stop with an unhandled throw" do
     {:ok, %{id: id}} = OpentelemetryOban.insert(TestJobThatThrowsValue.new(%{}))
+    message_id = Integer.to_string(id)
     assert %{success: 0, discard: 1} = Oban.drain_queue(queue: :events)
 
     expected_status = OpenTelemetry.status(:error, "")
@@ -345,7 +350,7 @@ defmodule OpentelemetryObanTest do
              "oban.job.scheduled_at": _scheduled_at,
              "oban.job.worker": "TestJobThatThrowsValue",
              "messaging.operation.type": :process,
-             "messaging.message.id": ^id,
+             "messaging.message.id": ^message_id,
              "messaging.client.id": "TestJobThatThrowsValue",
              "messaging.system.name": :oban,
              "error.type": "Oban.CrashError"
@@ -367,6 +372,7 @@ defmodule OpentelemetryObanTest do
 
   test "records spans for Oban jobs that stop with an abnormal exit" do
     {:ok, %{id: id}} = OpentelemetryOban.insert(TestJobThatExitsAbnormally.new(%{}))
+    message_id = Integer.to_string(id)
     assert %{success: 0, discard: 1} = Oban.drain_queue(queue: :events)
 
     expected_status = OpenTelemetry.status(:error, "")
@@ -393,7 +399,7 @@ defmodule OpentelemetryObanTest do
              "oban.job.scheduled_at": _scheduled_at,
              "oban.job.worker": "TestJobThatExitsAbnormally",
              "messaging.operation.type": :process,
-             "messaging.message.id": ^id,
+             "messaging.message.id": ^message_id,
              "messaging.client.id": "TestJobThatExitsAbnormally",
              "messaging.system.name": :oban,
              "error.type": "Oban.CrashError"
