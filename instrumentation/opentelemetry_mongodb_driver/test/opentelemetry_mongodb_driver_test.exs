@@ -374,5 +374,25 @@ defmodule OpentelemetryMongodbDriverTest do
                &match?(histogram_datapoint(attributes: %{"db.query.text": _}), &1)
              )
     end
+
+    test "is recorded for a command require_parent_span records no span for", %{conn: conn} do
+      OpentelemetryMongodbDriver.setup(require_parent_span: true)
+
+      Mongo.count_documents(conn, "untraced", %{})
+      :otel_meter_server.force_flush()
+
+      assert_receive {:otel_metric,
+                      metric(
+                        name: :"db.client.operation.duration",
+                        data: histogram(datapoints: datapoints)
+                      )}
+
+      assert Enum.any?(
+               datapoints,
+               &match?(histogram_datapoint(attributes: %{"db.collection.name": "untraced"}), &1)
+             )
+
+      refute_received {:span, _}
+    end
   end
 end

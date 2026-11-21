@@ -341,5 +341,28 @@ defmodule OpentelemetryChTest do
                &match?(histogram_datapoint(attributes: %{"db.query.text": _}), &1)
              )
     end
+
+    test "is recorded for a query require_parent_span records no span for", %{conn: conn} do
+      OpentelemetryCh.setup(require_parent_span: true)
+
+      Ch.query!(conn, "SELECT name FROM system.tables")
+      :otel_meter_server.force_flush()
+
+      assert_receive {:otel_metric,
+                      metric(
+                        name: :"db.client.operation.duration",
+                        data: histogram(datapoints: datapoints)
+                      )}
+
+      assert Enum.any?(
+               datapoints,
+               &match?(
+                 histogram_datapoint(attributes: %{"db.query.summary": "SELECT system.tables"}),
+                 &1
+               )
+             )
+
+      refute_received {:span, _}
+    end
   end
 end
