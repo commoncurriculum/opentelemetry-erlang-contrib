@@ -38,7 +38,7 @@ defmodule OpentelemetryOban.InsertHandlerTest do
 
     assert_receive {:span,
                     span(
-                      name: "send events",
+                      name: "send TestJob",
                       kind: :producer,
                       parent_span_id: ^caller_span_id,
                       attributes: attributes
@@ -67,7 +67,7 @@ defmodule OpentelemetryOban.InsertHandlerTest do
 
     assert_receive {:span,
                     span(
-                      name: "send",
+                      name: "send TestJob",
                       kind: :producer,
                       parent_span_id: ^caller_span_id,
                       attributes: attributes
@@ -75,6 +75,13 @@ defmodule OpentelemetryOban.InsertHandlerTest do
 
     assert %{"messaging.batch.message_count": 2, "messaging.system.name": :oban} =
              :otel_attributes.map(attributes)
+  end
+
+  test "an Oban.insert_all batch of different workers is named after the operation alone" do
+    Oban.insert_all([TestJob.new(%{}), TestJobThatReturnsError.new(%{})])
+
+    assert_receive {:span, span(name: "send", attributes: attributes)}
+    assert %{"messaging.batch.message_count": 2} = :otel_attributes.map(attributes)
   end
 
   test "Oban.insert_all evaluates a stream of changesets once, and the span counts the jobs" do
@@ -92,7 +99,7 @@ defmodule OpentelemetryOban.InsertHandlerTest do
     assert_received :evaluated
     refute_received :evaluated
 
-    assert_receive {:span, span(name: "send", attributes: attributes)}
+    assert_receive {:span, span(name: "send TestJob", attributes: attributes)}
     assert %{"messaging.batch.message_count": 2} = :otel_attributes.map(attributes)
   end
 
@@ -109,8 +116,8 @@ defmodule OpentelemetryOban.InsertHandlerTest do
     end
 
     assert_receive {:span, span(name: "caller", span_id: caller_span_id)}
-    assert_receive {:span, span(name: "send events", parent_span_id: ^caller_span_id)}
-    assert_receive {:span, span(name: "send", parent_span_id: ^caller_span_id)}
+    assert_receive {:span, span(name: "send TestJob", parent_span_id: ^caller_span_id)}
+    assert_receive {:span, span(name: "send TestJob", parent_span_id: ^caller_span_id)}
     refute_receive {:span, span(name: "oban.engine.insert_job")}
     refute_receive {:span, span(name: "oban.engine.insert_all_jobs")}
   end
@@ -124,7 +131,7 @@ defmodule OpentelemetryOban.InsertHandlerTest do
     end
 
     assert_receive {:span, span(name: "caller")}
-    refute_receive {:span, span(name: "send events")}
+    refute_receive {:span, span(name: "send TestJob")}
   end
 
   test "the worker hook writes the current trace into the job's meta, so the job links to it" do
@@ -142,7 +149,7 @@ defmodule OpentelemetryOban.InsertHandlerTest do
 
     assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :events)
 
-    assert_receive {:span, span(name: "process events", links: links)}
+    assert_receive {:span, span(name: "process TestJob", links: links)}
     assert [link(trace_id: ^caller_trace_id, span_id: ^caller_span_id)] = :otel_links.list(links)
   end
 

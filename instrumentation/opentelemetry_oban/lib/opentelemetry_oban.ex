@@ -72,7 +72,7 @@ defmodule OpentelemetryOban do
       default: :disabled,
       doc: """
       Traces inserts made with plain `Oban.insert/2` and `Oban.insert_all/2`, so callers need no
-      wrapper. Each insert records the producer span `insert/2` records (`send <queue>`, or `send`
+      wrapper. Each insert records the producer span `insert/2` records (`send <worker>`, or `send`
       for `insert_all/2`); use this or the wrapper, not both, or an insert gets two. With Oban Pro
       loaded, a global worker hook also writes the current trace context into the job's meta, so
       the job's `process` span links to the trace that enqueued it; a process with no span of its
@@ -150,9 +150,9 @@ defmodule OpentelemetryOban do
 
   def insert(name, %Changeset{} = changeset, opts) do
     attributes = attributes_before_insert(changeset)
-    queue = Changeset.get_field(changeset, :queue)
+    worker = Changeset.get_field(changeset, :worker)
 
-    OpenTelemetry.Tracer.with_span "send #{queue}", attributes: attributes, kind: :producer do
+    OpenTelemetry.Tracer.with_span "send #{worker}", attributes: attributes, kind: :producer do
       changeset = add_tracing_information_to_meta(changeset)
 
       case Oban.insert(name, changeset, opts) do
@@ -180,9 +180,9 @@ defmodule OpentelemetryOban do
 
   def insert!(name \\ Oban, %Changeset{} = changeset, opts \\ []) do
     attributes = attributes_before_insert(changeset)
-    queue = Changeset.get_field(changeset, :queue)
+    worker = Changeset.get_field(changeset, :worker)
 
-    OpenTelemetry.Tracer.with_span "send #{queue}", attributes: attributes, kind: :producer do
+    OpenTelemetry.Tracer.with_span "send #{worker}", attributes: attributes, kind: :producer do
       changeset = add_tracing_information_to_meta(changeset)
 
       try do
@@ -214,7 +214,9 @@ defmodule OpentelemetryOban do
         length(changesets)
       )
 
-    OpenTelemetry.Tracer.with_span "send", attributes: attrs, kind: :producer do
+    span_name = insert_all_span_name(Enum.map(changesets, &Changeset.get_field(&1, :worker)))
+
+    OpenTelemetry.Tracer.with_span span_name, attributes: attrs, kind: :producer do
       changesets = Enum.map(changesets, &add_tracing_information_to_meta/1)
       Oban.insert_all(name, changesets, opts)
     end
@@ -265,6 +267,14 @@ defmodule OpentelemetryOban do
       |> Enum.into(meta)
 
     Changeset.change(changeset, %{meta: new_meta})
+  end
+
+  @doc false
+  def insert_all_span_name(workers) do
+    case Enum.uniq(workers) do
+      [worker] -> "send #{worker}"
+      _workers -> "send"
+    end
   end
 
   @doc false
