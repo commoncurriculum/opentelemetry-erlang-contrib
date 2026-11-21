@@ -72,6 +72,15 @@ defmodule OpentelemetryPostgrex do
                       the statement as it is. Recorded text is cut to its first 2048 bytes.
                       """
                     ],
+                    require_parent_span: [
+                      type: :boolean,
+                      default: false,
+                      doc: """
+                      Whether a query records a span only inside a trace. `true` records none for
+                      a query that no traced work runs, such as a job queue's polling; its
+                      `db.client.operation.duration` is still recorded.
+                      """
+                    ],
                     opt_out_attrs: [
                       type: {:list, {:in, [DBAttributes.db_query_text()]}},
                       default: [],
@@ -96,11 +105,15 @@ defmodule OpentelemetryPostgrex do
   @spec setup(opts()) :: :ok
   def setup(opts \\ []) do
     opts = opts |> NimbleOptions.validate!(@options_schema) |> Map.new()
-    :otel_db_client.attach(__MODULE__, @events, %{query_text: :otel_db_query_text.mode(opts)})
+
+    :otel_db_client.attach(__MODULE__, @events, %{
+      query_text: :otel_db_query_text.mode(opts),
+      require_parent_span: opts.require_parent_span
+    })
   end
 
   @doc false
-  def handle([:postgrex, :query, :start], _measurements, metadata, %{query_text: mode}) do
+  def handle([:postgrex, :query, :start], _measurements, metadata, %{query_text: mode} = config) do
     {statement_attributes, span_attributes} =
       case statement_text(metadata.query.statement) do
         nil -> {%{}, %{}}
@@ -111,7 +124,8 @@ defmodule OpentelemetryPostgrex do
       __MODULE__,
       metadata.telemetry_span_context,
       Map.merge(connection_attributes(metadata), statement_attributes),
-      span_attributes
+      span_attributes,
+      %{require_parent_span: config.require_parent_span}
     )
   end
 

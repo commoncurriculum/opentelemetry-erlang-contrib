@@ -174,6 +174,19 @@ defmodule OpentelemetryPostgrexTest do
     assert_receive {:span, span(name: "SELECT", parent_span_id: ^parent_span_id)}
   end
 
+  test "require_parent_span records no span for a query outside a trace", %{conn: conn} do
+    OpentelemetryPostgrex.setup(require_parent_span: true)
+
+    Postgrex.transaction(conn, &Postgrex.query!(&1, "SELECT 1", []))
+
+    Tracer.with_span "parent" do
+      Postgrex.query!(conn, "SELECT 2", [])
+    end
+
+    assert_receive {:span, span(name: "parent", span_id: parent_span_id)}
+    assert [{:span, span(name: "SELECT", parent_span_id: ^parent_span_id)}] = spans()
+  end
+
   test "a failed query fails its span with the SQLSTATE code", %{conn: conn} do
     OpentelemetryPostgrex.setup()
 
@@ -356,6 +369,29 @@ defmodule OpentelemetryPostgrexTest do
                datapoints,
                &match?(histogram_datapoint(attributes: %{"db.query.text": _}), &1)
              )
+    end
+
+    test "is recorded for a query require_parent_span records no span for", %{conn: conn} do
+      OpentelemetryPostgrex.setup(require_parent_span: true)
+
+      Postgrex.query!(conn, "SELECT tablename FROM pg_tables", [])
+      :otel_meter_server.force_flush()
+
+      assert_receive {:otel_metric,
+                      metric(
+                        name: :"db.client.operation.duration",
+                        data: histogram(datapoints: datapoints)
+                      )}
+
+      assert Enum.any?(
+               datapoints,
+               &match?(
+                 histogram_datapoint(attributes: %{"db.query.summary": "SELECT pg_tables"}),
+                 &1
+               )
+             )
+
+      refute_received {:span, _}
     end
   end
 end
