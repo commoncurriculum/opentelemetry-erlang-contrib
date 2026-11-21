@@ -59,7 +59,7 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       %{plugin: Elixir.Oban.Plugins.Stager}
     )
 
-    assert_receive {:span, span(name: "Oban.Plugins.Stager process")}
+    assert_receive {:span, span(name: "Oban.Plugins.Stager process", kind: :internal)}
   end
 
   test "records span on plugin error" do
@@ -259,6 +259,7 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       execute_plugin(Oban.Plugins.Cron, %{jobs: [1, 3, 4]})
 
       assert %{
+               "messaging.system.name": :oban,
                "oban.plugin": "Oban.Plugins.Cron",
                "oban.plugins.cron.jobs_count": 3
              } ==
@@ -275,6 +276,7 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       })
 
       assert %{
+               "messaging.system.name": :oban,
                "error.type": "RuntimeError",
                "oban.plugin": "Oban.Plugins.Cron",
                "oban.plugins.cron.jobs_count": 0
@@ -286,6 +288,7 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       execute_plugin(Oban.Plugins.Gossip, %{gossip_count: 3})
 
       assert %{
+               "messaging.system.name": :oban,
                "oban.plugin": "Oban.Plugins.Gossip",
                "oban.plugins.gossip.gossip_count": 3
              } ==
@@ -299,6 +302,7 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       })
 
       assert %{
+               "messaging.system.name": :oban,
                "oban.plugin": "Oban.Plugins.Lifeline",
                "oban.plugins.lifeline.discarded_count": 3,
                "oban.plugins.lifeline.rescued_count": 2
@@ -310,6 +314,7 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       execute_plugin(Oban.Plugins.Pruner, %{pruned_count: 3})
 
       assert %{
+               "messaging.system.name": :oban,
                "oban.plugin": "Oban.Plugins.Pruner",
                "oban.plugins.pruner.pruned_count": 3
              } ==
@@ -322,6 +327,7 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       execute_plugin(Oban.Cron, %{jobs: [1, 3, 4]})
 
       assert %{
+               "messaging.system.name": :oban,
                "oban.plugin": "Oban.Cron",
                "oban.plugins.cron.jobs_count": 3
              } ==
@@ -335,6 +341,7 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       })
 
       assert %{
+               "messaging.system.name": :oban,
                "oban.plugin": "Oban.Lifeline",
                "oban.plugins.lifeline.discarded_count": 3,
                "oban.plugins.lifeline.rescued_count": 2
@@ -346,6 +353,7 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       execute_plugin(Oban.Pruner, %{pruned_count: 3})
 
       assert %{
+               "messaging.system.name": :oban,
                "oban.plugin": "Oban.Pruner",
                "oban.plugins.pruner.pruned_count": 3
              } ==
@@ -356,6 +364,7 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       execute_plugin(Oban.Pro.Plugins.DynamicCron, %{jobs: [1, 3, 4]})
 
       assert %{
+               "messaging.system.name": :oban,
                "oban.plugin": "Oban.Pro.Plugins.DynamicCron",
                "oban.pro.plugins.dynamic_cron.jobs_count": 3
              } ==
@@ -368,6 +377,7 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       })
 
       assert %{
+               "messaging.system.name": :oban,
                "error.type": "RuntimeError",
                "oban.plugin": "Oban.Pro.Plugins.DynamicCron",
                "oban.pro.plugins.dynamic_cron.jobs_count": 0
@@ -382,6 +392,7 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       })
 
       assert %{
+               "messaging.system.name": :oban,
                "oban.plugin": "Oban.Pro.Plugins.DynamicLifeline",
                "oban.pro.plugins.dynamic_lifeline.discarded_count": 3,
                "oban.pro.plugins.dynamic_lifeline.rescued_count": 2
@@ -393,6 +404,7 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       execute_plugin(Oban.Pro.Plugins.DynamicPrioritizer, %{reprioritized_count: 3})
 
       assert %{
+               "messaging.system.name": :oban,
                "oban.plugin": "Oban.Pro.Plugins.DynamicPrioritizer",
                "oban.pro.plugins.dynamic_prioritizer.reprioritized_count": 3
              } ==
@@ -403,6 +415,7 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       execute_plugin(Oban.Pro.Plugins.DynamicPruner, %{pruned_count: 3})
 
       assert %{
+               "messaging.system.name": :oban,
                "oban.plugin": "Oban.Pro.Plugins.DynamicPruner",
                "oban.pro.plugins.dynamic_pruner.pruned_count": 3
              } ==
@@ -415,6 +428,7 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       })
 
       assert %{
+               "messaging.system.name": :oban,
                "oban.plugin": "Oban.Pro.Plugins.DynamicScaler",
                "oban.pro.plugins.dynamic_scaler.scaler.last_scaled_to": 3,
                "oban.pro.plugins.dynamic_scaler.scaler.last_scaled_at": "2021-08-01T12:00:00Z"
