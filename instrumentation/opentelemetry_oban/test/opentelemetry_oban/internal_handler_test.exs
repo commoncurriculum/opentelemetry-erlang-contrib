@@ -49,8 +49,11 @@ defmodule OpentelemetryOban.InternalHandlerTest do
                     )},
                    5_000
 
-    assert %{"messaging.system.name": :oban, "messaging.destination.name": "events"} =
-             :otel_attributes.map(fetch_attributes)
+    assert %{
+             "messaging.system.name": :oban,
+             "messaging.operation.name": "fetch_jobs",
+             "messaging.destination.name": "events"
+           } = :otel_attributes.map(fetch_attributes)
 
     assert_receive {:span, span(name: "process TestJob", span_id: job_span_id)}, 5_000
 

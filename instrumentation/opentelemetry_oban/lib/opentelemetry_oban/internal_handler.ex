@@ -49,7 +49,7 @@ defmodule OpentelemetryOban.InternalHandler do
       @tracer_id,
       "oban.#{area}.#{operation}",
       metadata,
-      %{kind: :internal, attributes: attributes(metadata)}
+      %{kind: :internal, attributes: attributes(operation, metadata)}
     )
   end
 
@@ -77,8 +77,11 @@ defmodule OpentelemetryOban.InternalHandler do
     OpentelemetryTelemetry.end_telemetry_span(@tracer_id, metadata)
   end
 
-  defp attributes(metadata) do
-    %{:"messaging.system.name" => :oban}
+  defp attributes(operation, metadata) do
+    %{
+      :"messaging.system.name" => :oban,
+      MessagingAttributes.messaging_operation_name() => Atom.to_string(operation)
+    }
     |> put_queue(metadata)
   end
 
