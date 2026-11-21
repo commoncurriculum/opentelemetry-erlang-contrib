@@ -104,6 +104,7 @@ default_opts() ->
         opt_in_attrs => [],
         public_endpoint => false,
         public_endpoint_fn => {?MODULE, default_public_endpoint_fn, []},
+        redact_query_values => false,
         request_headers => [],
         response_headers => [],
         scheme_headers => [<<"forwarded">>, <<"x-forwarded-proto">>],
@@ -124,6 +125,7 @@ Supported options:
 * `opt_in_attrs` - Use semantic conventions library to ensure compatibility, e.g. `[{?HTTP_REQUEST_BODY_SIZE, true}]`. Default: `[]`
 * `public_endpoint` - Endpoint is public. Propagated traces will be added as a link. Default: `false`
 * `public_endpoint_fn` - Default function returns `false`. See docs for more info.
+* `redact_query_values` - Replace every value in `url.query` with `REDACTED`, keeping the keys. Set it to `true` when query strings can carry credentials or personal data. Default: `false`
 * `request_headers` - List of request headers to add as attributes. (lowercase). Default: `[]`
 * `response_headers` - List of response headers to add as attributes. (lowercase). Default: `[]`
 * `scheme_headers` - Headers to use for extracting original client request scheme. Default: `[<<"forwarded">>, <<"x-forwarded-proto">>]`
@@ -341,7 +343,7 @@ handle_event([cowboy, request, start], _Measurements, #{req := Req} = Meta, Conf
             false -> Attrs0
         end,
     Attrs2 = set_network_protocol_attrs(Attrs1, Version),
-    Attrs3 = set_query_string_attr(Attrs2, QueryString),
+    Attrs3 = set_query_string_attr(Attrs2, QueryString, Config),
     Attrs4 = set_server_address_attrs(Attrs3, ReqHeaders, Config),
     Attrs5 = set_req_header_attrs(Attrs4, ReqHeaders, Config),
     AttrsFinal = maps:merge(Attrs5, maps:filter(fun(K,_V) -> lists:member(K, OptedInAttrs) end, OptInAttrs)),
@@ -508,9 +510,18 @@ transform_status_to_code(Status) when is_binary(Status) ->
 transform_status_to_code(Status) ->
   Status.
 
-set_query_string_attr(Attrs, <<"">>) -> Attrs;
-set_query_string_attr(Attrs, QueryString) ->
+set_query_string_attr(Attrs, <<"">>, _Config) -> Attrs;
+set_query_string_attr(Attrs, QueryString, #{redact_query_values := true}) ->
+    maps:put(?URL_QUERY, redact_query_values(QueryString), Attrs);
+set_query_string_attr(Attrs, QueryString, _Config) ->
     maps:put(?URL_QUERY, QueryString, Attrs).
+
+redact_query_values(QueryString) ->
+    Pairs = [case binary:split(Pair, <<"=">>) of
+                 [Key, _Value] -> <<Key/binary, "=REDACTED">>;
+                 [Key] -> Key
+             end || Pair <- binary:split(QueryString, <<"&">>, [global])],
+    iolist_to_binary(lists:join(<<"&">>, Pairs)).
 
 set_network_protocol_attrs(Attrs, ReqVersion) ->
     case extract_network_protocol(ReqVersion) of

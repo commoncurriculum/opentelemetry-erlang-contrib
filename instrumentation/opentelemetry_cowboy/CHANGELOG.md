@@ -4,6 +4,7 @@
 
 ### Added
 
+* `redact_query_values` option. Set it to `true` to replace every value in `url.query` with `REDACTED`, keeping the keys, so credentials in query strings stay out of stored telemetry. Default: `false`.
 * The `http.server.active_requests` UpDownCounter, with `http.request.method` and `url.scheme`. It depends on `opentelemetry_api_experimental`, and records nothing unless the `opentelemetry_experimental` SDK is running.
 * `client_address` option. Set it to `false` to leave `client.address` off server spans, for example to keep IP addresses out of stored telemetry. Default: `true`.
 

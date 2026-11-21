@@ -27,6 +27,7 @@ all() ->
         with_all_optins,
         successful_request_with_custom_header_setting,
         request_without_client_address,
+        request_with_redacted_query_values,
         chunked_request,
         failed_request,
         client_timeout_request,
@@ -330,6 +331,18 @@ request_without_client_address(_Config) ->
             ?assertMatch(#{?NETWORK_PEER_ADDRESS := <<"127.0.0.1">>}, otel_attributes:map(Attributes))
     after
         1000 -> ct:fail(request_without_client_address)
+    end.
+
+request_with_redacted_query_values(_Config) ->
+    opentelemetry_cowboy:setup(#{redact_query_values => true}),
+    Port = 62671,
+    {ok, {{_Version, 200, _ReasonPhrase}, _Headers, _Body}} =
+        httpc:request(get, {"http://localhost:8080/success?sessionToken=secret&flag&token=a%3Db&empty=", []}, [], [{socket_opts, [{port, Port}]}]),
+    receive
+        {span, #span{attributes=Attributes}} ->
+            ?assertMatch(#{?URL_QUERY := <<"sessionToken=REDACTED&flag&token=REDACTED&empty=REDACTED">>}, otel_attributes:map(Attributes))
+    after
+        1000 -> ct:fail(request_with_redacted_query_values)
     end.
 
 chunked_request(_Config) ->
