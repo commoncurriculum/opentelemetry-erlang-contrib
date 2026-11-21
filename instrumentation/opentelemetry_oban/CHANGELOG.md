@@ -2,10 +2,17 @@
 
 ## Unreleased
 
+### Changed
+
+* Job and insert spans are named after the worker instead of the queue: `process <worker>` and
+  `send <worker>`, such as `process MyApp.Workers.SendEmail`. A queue name says nothing about the job
+  when one queue runs many workers; the queue stays in `messaging.destination.name`. An `insert_all`
+  batch is `send <worker>` when every job has the same worker, and `send` otherwise.
+
 ### Added
 
 * Added the `insert: []` option (off by default). Plain `Oban.insert/2` and `Oban.insert_all/2`
-  calls record the same producer span `OpentelemetryOban.insert` does (`send <queue>`, or `send`
+  calls record the same producer span `OpentelemetryOban.insert` does (`send <worker>`, or `send`
   with `messaging.batch.message_count` for `insert_all`), from Oban's
   `[:oban, :engine, :insert_job | :insert_all_jobs]` telemetry. With Oban Pro loaded, a global worker
   hook writes the trace context into each job's meta, so jobs link to the trace that enqueued them

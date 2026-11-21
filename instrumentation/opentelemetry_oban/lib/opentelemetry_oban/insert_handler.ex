@@ -32,9 +32,9 @@ defmodule OpentelemetryOban.InsertHandler do
   end
 
   def handle_event([:oban, :engine, :insert_job, :start], _measurements, metadata, _config) do
-    queue = Ecto.Changeset.get_field(metadata.changeset, :queue)
+    worker = Ecto.Changeset.get_field(metadata.changeset, :worker)
 
-    OpentelemetryTelemetry.start_telemetry_span(@tracer_id, "send #{queue}", metadata, %{
+    OpentelemetryTelemetry.start_telemetry_span(@tracer_id, "send #{worker}", metadata, %{
       kind: :producer,
       attributes: OpentelemetryOban.attributes_before_insert(metadata.changeset)
     })
@@ -61,6 +61,11 @@ defmodule OpentelemetryOban.InsertHandler do
 
   def handle_event([:oban, :engine, :insert_all_jobs, :stop], _measurements, metadata, _config) do
     ctx = OpentelemetryTelemetry.set_current_telemetry_span(@tracer_id, metadata)
+
+    Span.update_name(
+      ctx,
+      OpentelemetryOban.insert_all_span_name(Enum.map(metadata.jobs, & &1.worker))
+    )
 
     Span.set_attribute(
       ctx,

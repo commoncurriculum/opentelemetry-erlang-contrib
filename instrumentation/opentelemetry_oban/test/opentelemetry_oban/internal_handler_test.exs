@@ -52,7 +52,7 @@ defmodule OpentelemetryOban.InternalHandlerTest do
     assert %{"messaging.system.name": :oban, "messaging.destination.name": "events"} =
              :otel_attributes.map(fetch_attributes)
 
-    assert_receive {:span, span(name: "process events", span_id: job_span_id)}, 5_000
+    assert_receive {:span, span(name: "process TestJob", span_id: job_span_id)}, 5_000
 
     assert_receive {:span, span(name: "oban.engine.complete_job", parent_span_id: ^job_span_id)},
                    5_000
@@ -65,7 +65,7 @@ defmodule OpentelemetryOban.InternalHandlerTest do
     {:ok, _job} = Oban.insert(__MODULE__, TestJob.new(%{}))
     Oban.insert_all(__MODULE__, [TestJob.new(%{})])
 
-    assert_receive {:span, span(name: "process events")}, 5_000
+    assert_receive {:span, span(name: "process TestJob")}, 5_000
     refute_receive {:span, span(name: "oban.engine.insert_job")}, 200
     refute_receive {:span, span(name: "oban.engine.insert_all_jobs")}, 200
   end
@@ -116,7 +116,7 @@ defmodule OpentelemetryOban.InternalHandlerTest do
 
     {:ok, _job} = Oban.insert(__MODULE__, TestJob.new(%{}))
 
-    assert_receive {:span, span(name: "process events")}, 5_000
+    assert_receive {:span, span(name: "process TestJob")}, 5_000
     refute_receive {:span, span(name: "oban.engine." <> _)}, 200
   end
 end

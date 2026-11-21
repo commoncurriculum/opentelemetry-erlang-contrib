@@ -147,7 +147,7 @@ defmodule OpentelemetryOban.JobHandler do
       |> put_timestamp(:"oban.job.attempted_at", attempted_at)
       |> put_workflow_id(job_meta)
 
-    span_name = "process #{queue}"
+    span_name = "process #{worker}"
 
     span_opts = %{kind: :consumer, attributes: attributes}
     span_opts = put_links(span_opts, links)

@@ -41,7 +41,7 @@ defmodule OpentelemetryOban.JobHandlerTest do
       assert {:ok, %{state: "completed"}} =
                OpentelemetryOban.insert(InlineOban, TestJob.new(%{}))
 
-      assert_receive {:span, span(name: "process events", attributes: attributes)}
+      assert_receive {:span, span(name: "process TestJob", attributes: attributes)}
 
       attrs = :otel_attributes.map(attributes)
       assert %{"oban.job.worker": "TestJob", "oban.job.queue": "events"} = attrs
@@ -78,7 +78,7 @@ defmodule OpentelemetryOban.JobHandlerTest do
         :telemetry.execute([:oban, :job, :start], %{system_time: System.system_time()}, metadata)
         :telemetry.execute([:oban, :job, event], %{duration: 1_000}, metadata)
 
-        assert_receive {:span, span(name: "process events", attributes: attributes)}
+        assert_receive {:span, span(name: "process TestJob", attributes: attributes)}
         attrs = :otel_attributes.map(attributes)
         assert Map.has_key?(attrs, :"oban.job.duration_us")
         refute Map.has_key?(attrs, :"oban.job.queue_time_us")
@@ -111,7 +111,7 @@ defmodule OpentelemetryOban.JobHandlerTest do
         %{job: job}
       )
 
-      assert_receive {:span, span(name: "process events", attributes: attributes)}
+      assert_receive {:span, span(name: "process TestJob", attributes: attributes)}
 
       assert %{"oban.job.duration_us": 3_000, "oban.job.queue_time_us": 2_000} =
                :otel_attributes.map(attributes)
@@ -135,14 +135,14 @@ defmodule OpentelemetryOban.JobHandlerTest do
 
         assert_receive {:span,
                         span(
-                          name: "send events",
+                          name: "send TestJob",
                           trace_id: ^parent_trace_id,
                           span_id: send_span_id
                         )}
 
         assert_receive {:span,
                         span(
-                          name: "process events",
+                          name: "process TestJob",
                           kind: :consumer,
                           trace_id: ^parent_trace_id,
                           parent_span_id: ^send_span_id,
@@ -159,7 +159,7 @@ defmodule OpentelemetryOban.JobHandlerTest do
 
       assert_receive {:span,
                       span(
-                        name: "process events",
+                        name: "process TestJob",
                         kind: :consumer,
                         parent_span_id: :undefined,
                         links: links
@@ -175,7 +175,7 @@ defmodule OpentelemetryOban.JobHandlerTest do
 
         assert_receive {:span,
                         span(
-                          name: "process events",
+                          name: "process TestJobWithInnerSpan",
                           kind: :consumer,
                           trace_id: process_trace_id,
                           span_id: process_span_id
@@ -203,21 +203,21 @@ defmodule OpentelemetryOban.JobHandlerTest do
 
         assert_receive {:span,
                         span(
-                          name: "send events",
+                          name: "send TestJobThatReturnsError",
                           trace_id: ^parent_trace_id,
                           span_id: send_span_id
                         )}
 
         assert_receive {:span,
                         span(
-                          name: "process events",
+                          name: "process TestJobThatReturnsError",
                           trace_id: first_process_trace_id,
                           parent_span_id: first_parent_span_id
                         )}
 
         assert_receive {:span,
                         span(
-                          name: "process events",
+                          name: "process TestJobThatReturnsError",
                           trace_id: second_process_trace_id,
                           parent_span_id: second_parent_span_id
                         )}
@@ -243,14 +243,14 @@ defmodule OpentelemetryOban.JobHandlerTest do
 
       assert_receive {:span,
                       span(
-                        name: "send events",
+                        name: "send TestJob",
                         trace_id: send_trace_id,
                         span_id: send_span_id
                       )}
 
       assert_receive {:span,
                       span(
-                        name: "process events",
+                        name: "process TestJob",
                         kind: :consumer,
                         trace_id: process_trace_id,
                         parent_span_id: :undefined,
@@ -267,7 +267,7 @@ defmodule OpentelemetryOban.JobHandlerTest do
 
       assert_receive {:span,
                       span(
-                        name: "process events",
+                        name: "process TestJob",
                         kind: :consumer,
                         parent_span_id: :undefined,
                         links: links
@@ -282,7 +282,7 @@ defmodule OpentelemetryOban.JobHandlerTest do
 
       assert_receive {:span,
                       span(
-                        name: "process events",
+                        name: "process TestJobWithInnerSpan",
                         kind: :consumer,
                         trace_id: trace_id,
                         span_id: process_span_id
@@ -305,14 +305,14 @@ defmodule OpentelemetryOban.JobHandlerTest do
 
       assert_receive {:span,
                       span(
-                        name: "send events",
+                        name: "send TestJobThatReturnsError",
                         trace_id: send_trace_id,
                         span_id: send_span_id
                       )}
 
       assert_receive {:span,
                       span(
-                        name: "process events",
+                        name: "process TestJobThatReturnsError",
                         trace_id: first_process_trace_id,
                         links: job_1_links
                       )}
@@ -321,7 +321,7 @@ defmodule OpentelemetryOban.JobHandlerTest do
 
       assert_receive {:span,
                       span(
-                        name: "process events",
+                        name: "process TestJobThatReturnsError",
                         trace_id: second_process_trace_id,
                         links: job_2_links
                       )}
@@ -345,13 +345,13 @@ defmodule OpentelemetryOban.JobHandlerTest do
 
       assert_receive {:span,
                       span(
-                        name: "send events",
+                        name: "send TestJob",
                         trace_id: send_trace_id
                       )}
 
       assert_receive {:span,
                       span(
-                        name: "process events",
+                        name: "process TestJob",
                         kind: :consumer,
                         trace_id: process_trace_id,
                         parent_span_id: :undefined,
@@ -368,7 +368,7 @@ defmodule OpentelemetryOban.JobHandlerTest do
 
       assert_receive {:span,
                       span(
-                        name: "process events",
+                        name: "process TestJob",
                         kind: :consumer,
                         parent_span_id: :undefined,
                         links: links
@@ -383,7 +383,7 @@ defmodule OpentelemetryOban.JobHandlerTest do
 
       assert_receive {:span,
                       span(
-                        name: "process events",
+                        name: "process TestJobWithInnerSpan",
                         kind: :consumer,
                         trace_id: trace_id,
                         span_id: process_span_id
@@ -412,14 +412,14 @@ defmodule OpentelemetryOban.JobHandlerTest do
 
       assert_receive {:span,
                       span(
-                        name: "send events",
+                        name: "send TestJob",
                         trace_id: send_trace_id,
                         span_id: send_span_id
                       )}
 
       assert_receive {:span,
                       span(
-                        name: "process events",
+                        name: "process TestJob",
                         kind: :consumer,
                         trace_id: process_trace_id,
                         parent_span_id: :undefined,
@@ -442,7 +442,7 @@ defmodule OpentelemetryOban.JobHandlerTest do
       Oban.insert(TestJob.new(%{}))
       assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :events)
 
-      refute_receive {:span, span(name: "process events")}, 100
+      refute_receive {:span, span(name: "process TestJob")}, 100
     end
   end
 
@@ -497,7 +497,7 @@ defmodule OpentelemetryOban.JobHandlerTest do
       Oban.insert(TestJob.new(%{}))
       assert %{success: 1} = Oban.drain_queue(queue: :events)
 
-      assert_receive {:span, span(name: "process events")}
+      assert_receive {:span, span(name: "process TestJob")}
 
       handler_ids = Enum.map(:telemetry.list_handlers([:oban, :job]), & &1.id)
       assert "#{OpentelemetryOban.JobHandler}.job_stop" in handler_ids
