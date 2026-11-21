@@ -71,6 +71,15 @@ defmodule OpentelemetryMongodbDriver do
                       included. Recorded text is built only up to its first 2048 bytes.
                       """
                     ],
+                    require_parent_span: [
+                      type: :boolean,
+                      default: false,
+                      doc: """
+                      Whether a query records a span only inside a trace. `true` records none for
+                      a query that no traced work runs, such as a job queue's polling; its
+                      `db.client.operation.duration` is still recorded.
+                      """
+                    ],
                     opt_out_attrs: [
                       type: {:list, {:in, [DBAttributes.db_query_text()]}},
                       default: [],
@@ -95,7 +104,11 @@ defmodule OpentelemetryMongodbDriver do
   @spec setup(opts()) :: :ok
   def setup(opts \\ []) do
     opts = opts |> NimbleOptions.validate!(@options_schema) |> Map.new()
-    :otel_db_client.attach(__MODULE__, @events, %{query_text: :otel_db_query_text.mode(opts)})
+
+    :otel_db_client.attach(__MODULE__, @events, %{
+      query_text: :otel_db_query_text.mode(opts),
+      require_parent_span: opts.require_parent_span
+    })
   end
 
   @doc false
@@ -105,7 +118,7 @@ defmodule OpentelemetryMongodbDriver do
       metadata.telemetry_span_context,
       attributes(metadata),
       maybe_put(%{}, DBAttributes.db_query_text(), query_text(metadata, config)),
-      metadata.caller
+      %{caller: metadata.caller, require_parent_span: config.require_parent_span}
     )
   end
 

@@ -8,8 +8,15 @@
   and ends the spans of callers that exit before their stop.
 * `otel_db_client` writes the operation in a span name in SCREAMING_SNAKE_CASE (`FIND_AND_MODIFY users`,
   `CREATE_TABLE users`); `db.operation.name` keeps the database's own spelling.
+* `otel_db_client:start/5` takes options: `caller` (the pid it took before) and
+  `require_parent_span`, which records no span for a query outside a trace while still recording
+  its `db.client.operation.duration`.
 
 ### Fixes
+
+* `otel_db_client` parents a query on the nearest of `$callers` with a context, not only the first.
+  A process that only relays work, such as the server Cachex 4.1 runs a fetch fallback under, no
+  longer turns the query into a root span.
 
 * Do not attempt to end a span with if the ctx is undefined.
 

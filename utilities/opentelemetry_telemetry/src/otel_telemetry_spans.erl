@@ -21,7 +21,7 @@ create_tables() ->
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
--spec put(reference(), opentelemetry:span_ctx(), term()) -> boolean().
+-spec put(reference(), opentelemetry:span_ctx() | undefined, term()) -> boolean().
 put(Ref, SpanCtx, Attributes) ->
     Caller = self(),
     try
@@ -32,7 +32,7 @@ put(Ref, SpanCtx, Attributes) ->
         error:badarg -> false
     end.
 
--spec take(reference()) -> {opentelemetry:span_ctx(), term()} | undefined.
+-spec take(reference()) -> {opentelemetry:span_ctx() | undefined, term()} | undefined.
 take(Ref) ->
     try ets:take(?MODULE, Ref) of
         [{Ref, SpanCtx, Attributes, _Caller}] -> {SpanCtx, Attributes};

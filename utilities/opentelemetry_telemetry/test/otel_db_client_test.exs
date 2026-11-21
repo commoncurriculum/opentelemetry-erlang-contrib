@@ -98,7 +98,11 @@ defmodule OtelDbClientTest do
       Task.await(
         Task.async(fn ->
           Process.delete(:"$callers")
-          :otel_db_client.start(__MODULE__, ref, %{"db.system.name": :test}, %{}, caller)
+
+          :otel_db_client.start(__MODULE__, ref, %{"db.system.name": :test}, %{}, %{
+            caller: caller
+          })
+
           :otel_db_client.stop(ref, 1_000, fn _span -> {%{}, %{}} end)
         end)
       )
@@ -106,6 +110,52 @@ defmodule OtelDbClientTest do
 
     assert_receive {:span, span(name: "caller", span_id: caller_span_id)}
     assert_receive {:span, span(name: "test", parent_span_id: ^caller_span_id)}
+  end
+
+  test "a query in a process its caller spawned through a relay is a child of the caller's span" do
+    ref = make_ref()
+
+    :otel_tracer.with_span(:opentelemetry.get_tracer(), "caller", %{}, fn _ctx ->
+      caller = self()
+      relay = spawn(fn -> Process.sleep(:infinity) end)
+
+      Task.await(
+        Task.async(fn ->
+          Process.put(:"$callers", [relay, caller])
+          :otel_db_client.start(__MODULE__, ref, %{"db.system.name": :test}, %{})
+          :otel_db_client.stop(ref, 1_000, fn _span -> {%{}, %{}} end)
+        end)
+      )
+    end)
+
+    assert_receive {:span, span(name: "caller", span_id: caller_span_id)}
+    assert_receive {:span, span(name: "test", parent_span_id: ^caller_span_id)}
+  end
+
+  test "require_parent_span records no span outside a trace, and one inside it" do
+    outside = make_ref()
+    inside = make_ref()
+
+    :otel_db_client.start(__MODULE__, outside, %{"db.system.name": :outside}, %{}, %{
+      require_parent_span: true
+    })
+
+    :otel_db_client.stop(outside, 1_000, fn span ->
+      assert span == :undefined
+      {%{"error.type": "42P01"}, %{}}
+    end)
+
+    :otel_tracer.with_span(:opentelemetry.get_tracer(), "caller", %{}, fn _ctx ->
+      :otel_db_client.start(__MODULE__, inside, %{"db.system.name": :inside}, %{}, %{
+        require_parent_span: true
+      })
+
+      :otel_db_client.stop(inside, 1_000, fn _span -> {%{}, %{}} end)
+    end)
+
+    assert_receive {:span, span(name: "inside")}
+    assert_receive {:span, span(name: "caller")}
+    refute_received {:span, span(name: "outside")}
   end
 
   test "a span is named after its summary, else its operation and target, else its system" do
