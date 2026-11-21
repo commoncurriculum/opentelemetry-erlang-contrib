@@ -98,9 +98,11 @@ defmodule OtelDbClientTest do
       Task.await(
         Task.async(fn ->
           Process.delete(:"$callers")
+
           :otel_db_client.start(__MODULE__, ref, %{"db.system.name": :test}, %{}, %{
             caller: caller
           })
+
           :otel_db_client.stop(ref, 1_000, fn _span -> {%{}, %{}} end)
         end)
       )
