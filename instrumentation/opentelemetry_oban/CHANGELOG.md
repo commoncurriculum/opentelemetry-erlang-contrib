@@ -11,6 +11,8 @@
 
 ### Added
 
+* Internal engine and notifier spans carry `messaging.operation.name`, the Oban operation
+  (`fetch_jobs`, `check_meta`, `notify`, ...), so a sampler can tell polling apart from job work.
 * Added the `insert: []` option (off by default). Plain `Oban.insert/2` and `Oban.insert_all/2`
   calls record the same producer span `OpentelemetryOban.insert` does (`send <worker>`, or `send`
   with `messaging.batch.message_count` for `insert_all`), from Oban's
