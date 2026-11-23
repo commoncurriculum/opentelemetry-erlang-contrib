@@ -112,20 +112,6 @@ defmodule OpentelemetryMongodbDriverTest do
     assert_receive {:span, span(name: "AGGREGATE users", parent_span_id: ^parent_span_id)}
   end
 
-  test "require_parent_span records no span for a command outside a trace", %{conn: conn} do
-    OpentelemetryMongodbDriver.setup(require_parent_span: true)
-
-    Mongo.count_documents(conn, "users", %{})
-
-    Tracer.with_span "parent" do
-      Mongo.count_documents(conn, "users", %{})
-    end
-
-    assert_receive {:span, span(name: "AGGREGATE users", parent_span_id: parent_span_id)}
-    assert_receive {:span, span(name: "parent", span_id: ^parent_span_id)}
-    refute_receive {:span, span(name: "AGGREGATE users")}
-  end
-
   test "a command without a collection is named after its operation and database", %{conn: conn} do
     OpentelemetryMongodbDriver.setup()
 
@@ -373,26 +359,6 @@ defmodule OpentelemetryMongodbDriverTest do
                datapoints,
                &match?(histogram_datapoint(attributes: %{"db.query.text": _}), &1)
              )
-    end
-
-    test "is recorded for a command require_parent_span records no span for", %{conn: conn} do
-      OpentelemetryMongodbDriver.setup(require_parent_span: true)
-
-      Mongo.count_documents(conn, "untraced", %{})
-      :otel_meter_server.force_flush()
-
-      assert_receive {:otel_metric,
-                      metric(
-                        name: :"db.client.operation.duration",
-                        data: histogram(datapoints: datapoints)
-                      )}
-
-      assert Enum.any?(
-               datapoints,
-               &match?(histogram_datapoint(attributes: %{"db.collection.name": "untraced"}), &1)
-             )
-
-      refute_received {:span, _}
     end
   end
 end

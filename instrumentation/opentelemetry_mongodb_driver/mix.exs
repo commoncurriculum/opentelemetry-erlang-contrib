@@ -56,7 +56,7 @@ defmodule OpentelemetryMongodbDriver.MixProject do
       {:opentelemetry_process_propagator, "~> 0.3"},
       {:opentelemetry_telemetry,
        github: "commoncurriculum/opentelemetry-erlang-contrib",
-       ref: "14a0ee476605eb4fc209c7d08c0ac4126b5610fd",
+       ref: "bf340f349a4a60ddfd8d3603dcd3adb7bcbb32fa",
        sparse: "utilities/opentelemetry_telemetry"},
       {:opentelemetry_semantic_conventions, "~> 1.27"},
       {:telemetry, "~> 0.4 or ~> 1.0"}

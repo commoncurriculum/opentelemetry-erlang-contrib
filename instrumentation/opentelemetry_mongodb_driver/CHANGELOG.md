@@ -2,12 +2,6 @@
 
 ## Unreleased
 
-### Features
-
-* `require_parent_span: true` records no span for a query outside a trace, such as a job queue's
-  polling; its `db.client.operation.duration` is still recorded. A query in a process that
-  relays for a traced caller, such as a Cachex fetch fallback, is a child of that caller's span.
-
 ### Breaking Changes
 
 * Spans come from the driver's `[:mongodb_driver, :execution]` event, in the process that ran
