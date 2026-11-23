@@ -2,11 +2,7 @@
 
 -export([attach/3, handle_event/4, operation_name/1, span_name/1, start/4, start/5, stop/3]).
 
--export_type([start_options/0]).
-
 -include_lib("kernel/include/logger.hrl").
-
--type start_options() :: #{caller => pid(), require_parent_span => boolean()}.
 
 -define(DURATION, 'db.client.operation.duration').
 -define(BOUNDARIES, [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10]).
@@ -40,27 +36,16 @@ handle_event(Event, Measurements, Metadata, {Module, Config}) ->
 %% Attributes go on the span and on its duration measurement; SpanAttributes only on the span.
 -spec start(module(), reference(), map(), map()) -> ok.
 start(Module, Key, Attributes, SpanAttributes) ->
-    start(Module, Key, Attributes, SpanAttributes, #{}).
+    start(Module, Key, Attributes, SpanAttributes, self()).
 
-%% caller: the process the query runs for, when the driver runs it in another process; the span is
-%% a child of the caller's current span.
-%% require_parent_span: record no span for a query outside a trace. Its duration is still measured.
--spec start(module(), reference(), map(), map(), start_options()) -> ok.
-start(Module, Key, Attributes, SpanAttributes, Options) ->
-    Ctx = parent_context(maps:get(caller, Options, self())),
-    Span =
-        case
-            maps:get(require_parent_span, Options, false) andalso
-                not otel_span:is_valid(otel_tracer:current_span_ctx(Ctx))
-        of
-            true ->
-                undefined;
-            false ->
-                otel_tracer:start_span(Ctx, tracer(Module), span_name(Attributes), #{
-                    kind => client,
-                    attributes => maps:merge(Attributes, SpanAttributes)
-                })
-        end,
+%% Caller is the process the query runs for, when the driver runs it in another process: the span
+%% is a child of the caller's current span.
+-spec start(module(), reference(), map(), map(), pid()) -> ok.
+start(Module, Key, Attributes, SpanAttributes, Caller) ->
+    Span = otel_tracer:start_span(parent_context(Caller), tracer(Module), span_name(Attributes), #{
+        kind => client,
+        attributes => maps:merge(Attributes, SpanAttributes)
+    }),
     otel_telemetry_spans:put(Key, Span, {Module, Attributes}) orelse otel_span:end_span(Span),
     ok.
 
@@ -152,23 +137,18 @@ parent_context(_Self) ->
     Ctx = otel_ctx:get_current(),
     case otel_tracer:current_span_ctx(Ctx) of
         undefined ->
-            case caller_context(get('$callers')) of
+            Callers =
+                case get('$callers') of
+                    undefined -> [];
+                    Pids -> Pids
+                end,
+            case opentelemetry_process_propagator:fetch_parent_ctx(length(Callers), '$callers') of
                 undefined -> Ctx;
                 Parent -> Parent
             end;
         _Span ->
             Ctx
     end.
-
-%% The nearest caller with a context: the direct caller can be a process that only relays the work,
-%% such as the server Cachex runs a fetch fallback under.
-caller_context([Caller | Callers]) ->
-    case opentelemetry_process_propagator:fetch_ctx(Caller) of
-        undefined -> caller_context(Callers);
-        Ctx -> Ctx
-    end;
-caller_context(_NoCallers) ->
-    undefined.
 
 tracer(Module) ->
     opentelemetry:get_application_tracer(Module).

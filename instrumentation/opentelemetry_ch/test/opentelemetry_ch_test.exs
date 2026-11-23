@@ -141,20 +141,6 @@ defmodule OpentelemetryChTest do
     assert_receive {:span, span(name: "SELECT", parent_span_id: ^parent_span_id)}
   end
 
-  test "require_parent_span records no span for a query outside a trace", %{conn: conn} do
-    OpentelemetryCh.setup(require_parent_span: true)
-
-    Ch.query!(conn, "SELECT 1")
-
-    Tracer.with_span "parent" do
-      Ch.query!(conn, "SELECT 2")
-    end
-
-    assert_receive {:span, span(name: "SELECT", parent_span_id: parent_span_id)}
-    assert_receive {:span, span(name: "parent", span_id: ^parent_span_id)}
-    refute_receive {:span, span(name: "SELECT")}
-  end
-
   test "a failed query fails its span with the ClickHouse error code", %{conn: conn} do
     OpentelemetryCh.setup()
 
@@ -340,29 +326,6 @@ defmodule OpentelemetryChTest do
                datapoints,
                &match?(histogram_datapoint(attributes: %{"db.query.text": _}), &1)
              )
-    end
-
-    test "is recorded for a query require_parent_span records no span for", %{conn: conn} do
-      OpentelemetryCh.setup(require_parent_span: true)
-
-      Ch.query!(conn, "SELECT name FROM system.tables")
-      :otel_meter_server.force_flush()
-
-      assert_receive {:otel_metric,
-                      metric(
-                        name: :"db.client.operation.duration",
-                        data: histogram(datapoints: datapoints)
-                      )}
-
-      assert Enum.any?(
-               datapoints,
-               &match?(
-                 histogram_datapoint(attributes: %{"db.query.summary": "SELECT system.tables"}),
-                 &1
-               )
-             )
-
-      refute_received {:span, _}
     end
   end
 end
