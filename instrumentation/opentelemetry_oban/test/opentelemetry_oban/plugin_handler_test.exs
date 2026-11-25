@@ -59,7 +59,12 @@ defmodule OpentelemetryOban.PluginHandlerTest do
       %{plugin: Elixir.Oban.Plugins.Stager}
     )
 
-    assert_receive {:span, span(name: "Oban.Plugins.Stager process", kind: :internal, attributes: attributes)}
+    assert_receive {:span,
+                    span(
+                      name: "Oban.Plugins.Stager process",
+                      kind: :internal,
+                      attributes: attributes
+                    )}
 
     assert %{"messaging.system.name": :oban, "oban.plugin": "Oban.Plugins.Stager"} =
              :otel_attributes.map(attributes)
