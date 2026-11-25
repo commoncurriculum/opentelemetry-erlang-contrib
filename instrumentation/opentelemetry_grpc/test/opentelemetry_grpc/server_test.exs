@@ -317,6 +317,51 @@ defmodule OpentelemetryGrpc.ServerTest do
       end
     end
 
+    test "does not record an exception event when the handler raises NOT_FOUND", %{port: port} do
+      {:ok, channel} =
+        TestSupport.connect_client(port,
+          interceptors: [OpentelemetryGrpc.ContextPropagatorInterceptor]
+        )
+
+      request = %HelloRequest{name: "TriggerNotFound"}
+
+      assert {:error, %GRPC.RPCError{status: 5}} = TestService.Stub.say_hello(channel, request)
+
+      assert_receive {:span,
+                      span(
+                        name: "testserver.v1.TestService/SayHello",
+                        kind: :server,
+                        events: events
+                      )}
+
+      assert :otel_events.list(events) == []
+    end
+
+    test "records an exception event when the handler raises INTERNAL", %{port: port} do
+      {:ok, channel} =
+        TestSupport.connect_client(port,
+          interceptors: [OpentelemetryGrpc.ContextPropagatorInterceptor]
+        )
+
+      request = %HelloRequest{name: "TriggerInternal"}
+
+      assert {:error, %GRPC.RPCError{status: 13}} = TestService.Stub.say_hello(channel, request)
+
+      assert_receive {:span,
+                      span(
+                        name: "testserver.v1.TestService/SayHello",
+                        kind: :server,
+                        events: events
+                      )}
+
+      assert [event(name: :exception, attributes: event_attributes)] = :otel_events.list(events)
+
+      assert %{
+               :"exception.type" => "Elixir.GRPC.RPCError",
+               :"exception.message" => "Internal error"
+             } = :otel_attributes.map(event_attributes)
+    end
+
     test "records span with exception", %{port: port} do
       {:ok, channel} =
         TestSupport.connect_client(port,
@@ -325,14 +370,15 @@ defmodule OpentelemetryGrpc.ServerTest do
 
       request = %HelloRequest{name: "TriggerException"}
 
-      assert {:error, _error} = TestService.Stub.say_hello(channel, request)
+      assert {:error, %GRPC.RPCError{status: 2}} = TestService.Stub.say_hello(channel, request)
 
       assert_receive {:span,
                       span(
                         name: "testserver.v1.TestService/SayHello",
                         kind: :server,
                         status: status,
-                        attributes: attributes
+                        attributes: attributes,
+                        events: events
                       )}
 
       assert :otel_attributes.map(attributes) == %{
@@ -342,12 +388,47 @@ defmodule OpentelemetryGrpc.ServerTest do
                :"network.protocol.name" => "http",
                :"network.protocol.version" => "2",
                :"network.transport" => "tcp",
-               :"rpc.grpc.status_code" => 13,
+               :"rpc.grpc.status_code" => 2,
                :"error.type" => "Elixir.RuntimeError",
                "elixir.grpc.server_module" => "Elixir.OpentelemetryGrpc.Test.TestServer"
              }
 
       assert status == OpenTelemetry.status(:error, "Server crashed")
+
+      assert [event(name: :exception, attributes: event_attributes)] = :otel_events.list(events)
+
+      assert %{
+               :"exception.type" => "Elixir.RuntimeError",
+               :"exception.message" => "Server crashed",
+               :"exception.stacktrace" => stacktrace
+             } = :otel_attributes.map(event_attributes)
+
+      assert stacktrace =~ "OpentelemetryGrpc.Test.TestServer.say_hello/2"
+    end
+
+    for {name, kind} <- [{"TriggerThrow", :throw}, {"TriggerExit", :exit}] do
+      @tag request_name: name
+      test "records the UNKNOWN status code the client receives when the handler uses #{kind}",
+           %{port: port, request_name: request_name} do
+        {:ok, channel} =
+          TestSupport.connect_client(port,
+            interceptors: [OpentelemetryGrpc.ContextPropagatorInterceptor]
+          )
+
+        request = %HelloRequest{name: request_name}
+
+        assert {:error, %GRPC.RPCError{status: 2}} = TestService.Stub.say_hello(channel, request)
+
+        assert_receive {:span,
+                        span(
+                          name: "testserver.v1.TestService/SayHello",
+                          kind: :server,
+                          status: {:status, :error, _description},
+                          attributes: attributes
+                        )}
+
+        assert %{:"rpc.grpc.status_code" => 2} = :otel_attributes.map(attributes)
+      end
     end
   end
 end
