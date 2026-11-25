@@ -45,7 +45,7 @@ defmodule OpentelemetryOban.PluginHandler do
       @tracer_id,
       "#{inspect(plugin)} process",
       metadata,
-      %{attributes: %{"oban.plugin": inspect(plugin)}}
+      %{kind: :internal, attributes: %{"messaging.system.name": :oban, "oban.plugin": inspect(plugin)}}
     )
   end
 

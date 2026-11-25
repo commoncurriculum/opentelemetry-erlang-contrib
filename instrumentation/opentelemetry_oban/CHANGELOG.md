@@ -8,6 +8,8 @@
   `send <worker>`, such as `process MyApp.Workers.SendEmail`. A queue name says nothing about the job
   when one queue runs many workers; the queue stays in `messaging.destination.name`. An `insert_all`
   batch is `send <worker>` when every job has the same worker, and `send` otherwise.
+* Plugin spans are `internal` and carry `messaging.system.name: oban`, like the engine, notifier and
+  peer spans, so every span of Oban's own machinery shares one kind and system.
 
 ### Added
 
