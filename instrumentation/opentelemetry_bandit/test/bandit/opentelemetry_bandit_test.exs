@@ -219,7 +219,7 @@ defmodule OpentelemetryBanditTest do
         {ClientAttributes.client_address(), "127.0.0.1"},
         {HTTPAttributes.http_request_body_size(), 0},
         {HTTPAttributes.http_request_method(), :GET},
-        {HTTPAttributes.http_response_body_size(), 29},
+        {HTTPAttributes.http_response_body_size(), 9},
         {HTTPAttributes.http_response_status_code(), 200},
         {String.to_atom("#{HTTPAttributes.http_request_header()}.test-header"),
          ["request header"]},

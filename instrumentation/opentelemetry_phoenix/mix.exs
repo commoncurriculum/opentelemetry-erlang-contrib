@@ -78,13 +78,13 @@ defmodule OpentelemetryPhoenix.MixProject do
       {:opentelemetry_experimental, "== 0.6.0", only: [:dev, :test]},
       {:opentelemetry_bandit, "== 0.3.0", only: [:dev, :test]},
       {:opentelemetry_cowboy, "== 1.0.0", only: [:dev, :test]},
-      {:ex_doc, "== 0.40.4", only: [:dev], runtime: false},
+      {:ex_doc, "== 0.40.5", only: [:dev], runtime: false},
       {:phoenix, "~> 1.7", optional: true},
       {:phoenix_live_view, "~> 1.0", optional: true},
       {:phoenix_html, "~> 4.0", optional: true},
       {:lazy_html, "== 0.1.14", only: [:dev, :test]},
       {:plug_cowboy, "== 2.9.0", only: [:dev, :test]},
-      {:bandit, "== 1.14.1", only: [:dev, :test]},
+      {:bandit, "== 1.15.0", only: [:dev, :test]},
       {:req, "== 0.7.5", only: [:dev, :test]},
       {:dialyxir, "== 1.4.9", only: [:dev, :test], runtime: false}
     ]
